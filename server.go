@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -317,6 +318,10 @@ func (s *Server) Start() error {
 		IdleTimeout:       120 * time.Second, // 保持连接等待下一个请求的超时时间
 		ReadHeaderTimeout: 10 * time.Second,  // 读取请求头的超时时间
 		MaxHeaderBytes:    1 << 20,           // 限制请求头大小为 1MB
+		ErrorLog: log.NewWithOptions(os.Stderr, log.Options{Prefix: "http"}).
+			StandardLog(log.StandardLogOptions{
+				ForceLevel: log.ErrorLevel,
+			}),
 	}
 
 	// 启用 TCP keep-alive
