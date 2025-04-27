@@ -194,6 +194,7 @@ func (s *Server) loadProxyConfigs() error {
 	}
 	close(results)
 
+	// Phase 1: Obtain all wildcard certificates first
 	for wildcardDomain := range wildcardCerts {
 		if err := s.certManager.ObtainCert(wildcardDomain); err != nil {
 			log.Warn("Failed to obtain wildcard certificate",
@@ -209,18 +210,57 @@ func (s *Server) loadProxyConfigs() error {
 		}
 	}
 
-	s.mu.Lock()
+	// Phase 2: Prepare new proxy map but don't install it yet
+	newProxies := make(map[string]*httputil.ReverseProxy)
+	var successCount, errorCount int
+
+	// Track which domains are in the new configuration
+	configuredDomains := make(map[string]bool)
+	for domain := range proxies {
+		configuredDomains[domain] = true
+	}
+
 	for result := range results {
 		if result.err != nil {
 			log.Warn("Failed to configure proxy", "domain", result.domain, "err", result.err)
+			errorCount++
+			// Keep the existing proxy for failed domains if they were previously configured
+			if oldProxy, exists := s.proxies[result.domain]; exists && configuredDomains[result.domain] {
+				newProxies[result.domain] = oldProxy
+				log.Info("Keeping existing proxy configuration", "domain", result.domain)
+			}
 			continue
 		}
-		s.proxies[result.domain] = result.proxy
+		newProxies[result.domain] = result.proxy
+		successCount++
 		log.Info("Successfully configured proxy",
 			"domain", result.domain,
 			"target", result.targetURL.String())
 	}
-	s.mu.Unlock()
+
+	// Find domains that were removed from configuration
+	s.mu.RLock()
+	var removedCount int
+	for domain := range s.proxies {
+		if !configuredDomains[domain] {
+			removedCount++
+			log.Info("Removing proxy configuration", "domain", domain)
+		}
+	}
+	s.mu.RUnlock()
+
+	if successCount > 0 || removedCount > 0 {
+		s.mu.Lock()
+		s.proxies = newProxies
+		s.mu.Unlock()
+		log.Info("Updated proxy configurations",
+			"success", successCount,
+			"errors", errorCount,
+			"removed", removedCount,
+			"total", len(newProxies))
+	} else if errorCount > 0 {
+		log.Warn("No proxy configurations were successfully loaded", "errors", errorCount)
+	}
 
 	return nil
 }

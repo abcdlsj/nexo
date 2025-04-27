@@ -95,14 +95,11 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) reloadConfig() error {
-	s.mu.Lock()
-	// Clear existing proxies
-	s.proxies = make(map[string]*httputil.ReverseProxy)
-	s.mu.Unlock()
-
 	// 重新评估失败的证书记录
 	s.reevaluateFailedCerts()
 
 	// Reload proxy configurations
+	// loadProxyConfigs will handle the atomic swap of the proxy map
+	// only after successfully loading all new configurations
 	return s.loadProxyConfigs()
 }
