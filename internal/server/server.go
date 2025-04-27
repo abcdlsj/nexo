@@ -22,6 +22,9 @@ type Server struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+	// 记录证书获取失败的域名及其下次重试时间
+	failedCerts   map[string]time.Time
+	failedCertsMu sync.RWMutex
 }
 
 type ProxyConfig struct {
@@ -35,10 +38,14 @@ func New() *Server {
 		proxies:     make(map[string]*httputil.ReverseProxy),
 		ctx:         ctx,
 		cancel:      cancel,
+		failedCerts: make(map[string]time.Time),
 	}
 
 	// Start certificate renewal goroutine
 	go s.autoRenewCertificates()
+
+	// Start retry failed certificates goroutine
+	go s.retryFailedCertificates()
 
 	// Setup config file watcher
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -81,6 +88,50 @@ func (s *Server) autoRenewCertificates() {
 			for _, domain := range domains {
 				if err := s.certManager.ObtainCert(domain); err != nil {
 					fmt.Printf("Error renewing certificate for %s: %v\n", domain, err)
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) retryFailedCertificates() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			var domainsToRetry []string
+
+			// 收集需要重试的域名
+			s.failedCertsMu.RLock()
+			for domain, retryTime := range s.failedCerts {
+				if now.After(retryTime) {
+					domainsToRetry = append(domainsToRetry, domain)
+				}
+			}
+			s.failedCertsMu.RUnlock()
+
+			// 重试这些域名
+			for _, domain := range domainsToRetry {
+				fmt.Printf("Retrying certificate acquisition for %s\n", domain)
+				if err := s.certManager.ObtainCert(domain); err != nil {
+					fmt.Printf("Retry failed for %s: %v\n", domain, err)
+					s.addFailedCert(domain, err)
+				} else {
+					fmt.Printf("Successfully obtained certificate for %s\n", domain)
+					// 成功后从失败列表中移除
+					s.failedCertsMu.Lock()
+					delete(s.failedCerts, domain)
+					s.failedCertsMu.Unlock()
+
+					// 重新加载配置以添加代理
+					if err := s.reloadConfig(); err != nil {
+						fmt.Printf("Error reloading config after successful retry: %v\n", err)
+					}
 				}
 			}
 		}
@@ -179,6 +230,32 @@ func (s *Server) createReverseProxy(targetURL *url.URL, domain string) *httputil
 	return proxy
 }
 
+// 解析错误消息中的重试时间
+func parseRetryTime(err error) (time.Time, bool) {
+	errStr := err.Error()
+	if strings.Contains(errStr, "retry after") {
+		// 尝试提取重试时间
+		parts := strings.Split(errStr, "retry after")
+		if len(parts) > 1 {
+			timeStr := strings.Split(parts[1], "UTC")[0]
+			retryTime, err := time.Parse("2006-01-02 15:04:05", strings.TrimSpace(timeStr))
+			if err == nil {
+				return retryTime, true
+			}
+		}
+	}
+	// 如果无法解析时间，默认1小时后重试
+	return time.Now().Add(1 * time.Hour), false
+}
+
+func (s *Server) addFailedCert(domain string, err error) {
+	retryTime, _ := parseRetryTime(err)
+	s.failedCertsMu.Lock()
+	s.failedCerts[domain] = retryTime
+	s.failedCertsMu.Unlock()
+	fmt.Printf("Added %s to retry queue, will retry after %v\n", domain, retryTime.Format("2006-01-02 15:04:05 UTC"))
+}
+
 func (s *Server) loadProxyConfigs() error {
 	proxies := viper.GetStringMap("proxies")
 	if len(proxies) == 0 {
@@ -224,6 +301,8 @@ func (s *Server) loadProxyConfigs() error {
 
 			// Request certificate
 			if err := s.certManager.ObtainCert(domain); err != nil {
+				// 添加到失败列表中
+				s.addFailedCert(domain, err)
 				results <- proxySetup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
 				return nil
 			}
