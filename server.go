@@ -14,15 +14,15 @@ import (
 )
 
 type Server struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx context.Context
+	c   context.CancelFunc
 
 	proxies map[string]*httputil.ReverseProxy
 
-	certManager *CertManager
+	certm *CertManager
 
-	failedCerts   map[string]time.Time
-	failedCertsMu sync.RWMutex
+	failed   map[string]time.Time
+	failedmu sync.RWMutex
 
 	mu sync.RWMutex
 }
@@ -48,11 +48,11 @@ func New() *Server {
 	}
 
 	s := &Server{
-		certManager: NewCertManager(certConfig),
-		proxies:     make(map[string]*httputil.ReverseProxy),
-		ctx:         ctx,
-		cancel:      cancel,
-		failedCerts: make(map[string]time.Time),
+		certm:   NewCertManager(certConfig),
+		proxies: make(map[string]*httputil.ReverseProxy),
+		ctx:     ctx,
+		c:       cancel,
+		failed:  make(map[string]time.Time),
 	}
 
 	// Start certificate renewal goroutine
@@ -74,8 +74,8 @@ func New() *Server {
 }
 
 func (s *Server) Stop() {
-	if s.cancel != nil {
-		s.cancel()
+	if s.c != nil {
+		s.c()
 	}
 }
 
@@ -91,7 +91,7 @@ func (s *Server) Start() error {
 		Addr:    ":443",
 		Handler: s.handleHTTPS(),
 		TLSConfig: &tls.Config{
-			GetCertificate: s.certManager.GetCertificate,
+			GetCertificate: s.certm.GetCertificate,
 		},
 	}
 

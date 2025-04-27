@@ -20,24 +20,24 @@ func (s *Server) retryCerts() {
 			now := time.Now()
 			var domains []string
 
-			s.failedCertsMu.RLock()
-			for domain, retryTime := range s.failedCerts {
+			s.failedmu.RLock()
+			for domain, retryTime := range s.failed {
 				if now.After(retryTime) {
 					domains = append(domains, domain)
 				}
 			}
-			s.failedCertsMu.RUnlock()
+			s.failedmu.RUnlock()
 
 			for _, domain := range domains {
 				log.Info("Retrying certificate acquisition", "domain", domain)
-				if err := s.certManager.ObtainCert(domain); err != nil {
+				if err := s.certm.ObtainCert(domain); err != nil {
 					log.Error("Retry failed", "domain", domain, "err", err)
 					s.addFailedCert(domain, err)
 				} else {
 					log.Info("Successfully obtained certificate", "domain", domain)
-					s.failedCertsMu.Lock()
-					delete(s.failedCerts, domain)
-					s.failedCertsMu.Unlock()
+					s.failedmu.Lock()
+					delete(s.failed, domain)
+					s.failedmu.Unlock()
 
 					if strings.HasPrefix(domain, "*.") {
 						log.Info("Successfully obtained wildcard certificate, reloading all proxy configurations", "domain", domain)
@@ -85,9 +85,9 @@ func parseRetryTime(err error) (time.Time, bool) {
 
 func (s *Server) addFailedCert(domain string, err error) {
 	retryTime, _ := parseRetryTime(err)
-	s.failedCertsMu.Lock()
-	s.failedCerts[domain] = retryTime
-	s.failedCertsMu.Unlock()
+	s.failedmu.Lock()
+	s.failed[domain] = retryTime
+	s.failedmu.Unlock()
 	log.Info("Added domain to retry queue",
 		"domain", domain,
 		"retry_time", retryTime.Format("2006-01-02 15:04:05 UTC"))
@@ -99,8 +99,8 @@ func (s *Server) checkFailedCerts() {
 		return
 	}
 
-	s.failedCertsMu.Lock()
-	defer s.failedCertsMu.Unlock()
+	s.failedmu.Lock()
+	defer s.failedmu.Unlock()
 
 	certs := make(map[string]bool)
 	for domain := range proxies {
@@ -119,20 +119,20 @@ func (s *Server) checkFailedCerts() {
 		}
 	}
 
-	for domain := range s.failedCerts {
+	for domain := range s.failed {
 		if !certs[domain] {
 			parts := strings.SplitN(domain, ".", 2)
 			if len(parts) == 2 {
 				wildcardDomain := "*." + parts[1]
 				if certs[wildcardDomain] {
-					delete(s.failedCerts, domain)
+					delete(s.failed, domain)
 					log.Info("Removed failed cert record as it now uses wildcard cert",
 						"domain", domain,
 						"wildcard_domain", wildcardDomain)
 					continue
 				}
 			}
-			delete(s.failedCerts, domain)
+			delete(s.failed, domain)
 			log.Info("Removed failed cert record as it is no longer in configuration", "domain", domain)
 		}
 	}

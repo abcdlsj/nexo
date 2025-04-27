@@ -108,7 +108,7 @@ func (s *Server) loadProxies() error {
 		return nil
 	}
 
-	g, ctx := errgroup.WithContext(context.Background())
+	eg, ctx := errgroup.WithContext(context.Background())
 
 	type setup struct {
 		domain     string
@@ -128,7 +128,7 @@ func (s *Server) loadProxies() error {
 
 	for domain := range proxies {
 		domain := domain
-		g.Go(func() error {
+		eg.Go(func() error {
 			var cfg ProxyConfig
 			if err := gViper.UnmarshalKey("proxies:"+domain, &cfg); err != nil {
 				results <- setup{domain: domain, err: fmt.Errorf("error parsing proxy config: %v", err)}
@@ -158,10 +158,10 @@ func (s *Server) loadProxies() error {
 			}
 
 			// Try to get existing certificate
-			cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 			if err != nil || cert == nil {
 				log.Info("Certificate not found, obtaining new certificate", "domain", domain, "certDomain", certDomain)
-				if err := s.certManager.ObtainCert(certDomain); err != nil {
+				if err := s.certm.ObtainCert(certDomain); err != nil {
 					s.addFailedCert(domain, err)
 					results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
 					return nil
@@ -183,7 +183,7 @@ func (s *Server) loadProxies() error {
 		})
 	}
 
-	if err := g.Wait(); err != nil {
+	if err := eg.Wait(); err != nil {
 		close(results)
 		return err
 	}

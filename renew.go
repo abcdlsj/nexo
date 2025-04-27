@@ -49,7 +49,7 @@ func (s *Server) renewCerts() {
 
 			// 更新所有需要的证书
 			for domain := range certs {
-				if err := s.certManager.ObtainCert(domain); err != nil {
+				if err := s.certm.ObtainCert(domain); err != nil {
 					log.Error("Error renewing certificate", "domain", domain, "err", err)
 				} else {
 					log.Info("Successfully renewed certificate", "domain", domain)

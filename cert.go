@@ -35,14 +35,15 @@ type CertManager struct {
 	account      *Account
 	certificates map[string]*tls.Certificate
 	challenges   map[string]string
-	mu           sync.RWMutex
 	certDir      string
+
+	mu sync.RWMutex
 }
 
 type Account struct {
+	key          crypto.PrivateKey
 	Email        string
 	Registration *registration.Resource
-	key          crypto.PrivateKey
 }
 
 func (a *Account) GetEmail() string {
