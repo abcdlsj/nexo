@@ -146,8 +146,6 @@ func (s *Server) loadProxies() error {
 				return nil
 			}
 
-			proxy := s.createReverseProxy(target, domain)
-
 			var certDomain string
 			if cfg.UseWildcardCert {
 				certDomain = getWildcardDomain(domain)
@@ -155,50 +153,30 @@ func (s *Server) loadProxies() error {
 					results <- setup{domain: domain, err: fmt.Errorf("invalid domain for wildcard cert: %s", domain)}
 					return nil
 				}
-
-				if cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err == nil && cert != nil {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
-					}
-					return nil
-				} else {
-					log.Info("Wildcard certificate not found, obtaining certificate", "domain", domain)
-					if err := s.certManager.ObtainCert(certDomain); err != nil {
-						s.addFailedCert(domain, err)
-						results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
-						return nil
-					} else {
-						log.Info("Successfully obtained wildcard certificate", "domain", domain)
-						select {
-						case <-ctx.Done():
-							return ctx.Err()
-						case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
-						}
-						return nil
-					}
-				}
 			} else {
 				certDomain = domain
+			}
 
-				cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
-				if err != nil || cert == nil {
-					results <- setup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
+			// Try to get existing certificate
+			cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+			if err != nil || cert == nil {
+				log.Info("Certificate not found, obtaining new certificate", "domain", domain, "certDomain", certDomain)
+				if err := s.certManager.ObtainCert(certDomain); err != nil {
+					s.addFailedCert(domain, err)
+					results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
 					return nil
-				} else {
-					if err := s.certManager.ObtainCert(certDomain); err != nil {
-						s.addFailedCert(domain, err)
-						results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
-						return nil
-					}
-
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
-					}
 				}
+				log.Info("Successfully obtained certificate", "domain", domain, "certDomain", certDomain)
+			} else {
+				log.Info("Certificate found, using existing certificate", "domain", domain, "certDomain", certDomain)
+			}
+
+			proxy := s.createReverseProxy(target, domain)
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
 			}
 
 			return nil
