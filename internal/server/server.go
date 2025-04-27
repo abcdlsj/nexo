@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,7 +40,26 @@ func New() *Server {
 	// Start certificate renewal goroutine
 	go s.autoRenewCertificates()
 
+	// Setup config file watcher
+	viper.OnConfigChange(func(e fsnotify.Event) {
+		fmt.Printf("Config file changed: %s\n", e.Name)
+		if err := s.reloadConfig(); err != nil {
+			fmt.Printf("Error reloading config: %v\n", err)
+		}
+	})
+	viper.WatchConfig()
+
 	return s
+}
+
+func (s *Server) reloadConfig() error {
+	s.mu.Lock()
+	// Clear existing proxies
+	s.proxies = make(map[string]*httputil.ReverseProxy)
+	s.mu.Unlock()
+
+	// Reload proxy configurations
+	return s.loadProxyConfigs()
 }
 
 func (s *Server) autoRenewCertificates() {

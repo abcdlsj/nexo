@@ -5,6 +5,7 @@ go 1.23.0
 toolchain go1.23.4
 
 require (
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/go-acme/lego/v4 v4.15.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
@@ -14,7 +15,6 @@ require (
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cloudflare/cloudflare-go v0.86.0 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.1 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect

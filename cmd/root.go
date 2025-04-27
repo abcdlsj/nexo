@@ -15,7 +15,7 @@ var (
 		Use:   "nexo",
 		Short: "A simple HTTPS reverse proxy tool",
 		Long: `Nexo is a simple HTTPS reverse proxy tool with automatic certificate management.
-It supports wildcard certificates and provides a simple command-line interface for proxy management.`,
+It supports wildcard certificates and configuration through YAML files.`,
 	}
 )
 
@@ -25,24 +25,17 @@ func Execute() error {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.nexo/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/nexo/config.yaml)")
 }
 
 func initConfig() {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
-		home, err := os.UserHomeDir()
-		cobra.CheckErr(err)
-
-		configDir := filepath.Join(home, ".nexo")
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
-			os.Exit(1)
-		}
-
-		viper.AddConfigPath(configDir)
+		// Default config locations
+		viper.AddConfigPath("/etc/nexo")
+		viper.AddConfigPath("$HOME/.nexo")
+		viper.AddConfigPath(".")
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("config")
 	}
@@ -57,15 +50,35 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			// Config file not found, create it with default values
+			configDir := "/etc/nexo"
+			if os.Getuid() != 0 {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error getting home directory: %v\n", err)
+					os.Exit(1)
+				}
+				configDir = filepath.Join(home, ".nexo")
+			}
+
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
+				os.Exit(1)
+			}
+
+			configFile := filepath.Join(configDir, "config.yaml")
+			viper.SetConfigFile(configFile)
 			if err := viper.SafeWriteConfig(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating config file: %v\n", err)
 				os.Exit(1)
 			}
+			fmt.Printf("Created default config file at: %s\n", configFile)
 		} else {
 			fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
 			os.Exit(1)
 		}
 	}
+
+	fmt.Printf("Using config file: %s\n", viper.ConfigFileUsed())
 
 	// Validate required configuration
 	if viper.GetString("cloudflare.api_token") == "" {
