@@ -8,15 +8,17 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
-	"github.com/go-acme/lego/v4/challenge/http01"
 	"github.com/go-acme/lego/v4/lego"
+	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/registration"
+	"github.com/spf13/viper"
 )
 
 type CertManager struct {
@@ -46,6 +48,19 @@ func (a *Account) GetPrivateKey() crypto.PrivateKey {
 }
 
 func NewCertManager() *CertManager {
+	// Get Cloudflare credentials from config
+	cfAPIToken := viper.GetString("cloudflare.api_token")
+	if cfAPIToken == "" {
+		fmt.Fprintf(os.Stderr, "Error: Cloudflare API token not found in config\n")
+		os.Exit(1)
+	}
+
+	email := viper.GetString("email")
+	if email == "" {
+		fmt.Fprintf(os.Stderr, "Error: Email not found in config\n")
+		os.Exit(1)
+	}
+
 	// Create account private key
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -53,7 +68,7 @@ func NewCertManager() *CertManager {
 	}
 
 	account := &Account{
-		Email: "admin@example.com", // TODO: Make configurable
+		Email: email,
 		key:   privateKey,
 	}
 
@@ -66,6 +81,23 @@ func NewCertManager() *CertManager {
 		panic(err)
 	}
 
+	// Configure Cloudflare DNS provider
+	cfProvider, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
+		AuthToken:          cfAPIToken,
+		TTL:                120,
+		PropagationTimeout: 180 * time.Second, // DNS传播等待时间
+		PollingInterval:    2 * time.Second,   // DNS检查间隔
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	// Set Cloudflare as DNS provider
+	err = client.Challenge.SetDNS01Provider(cfProvider)
+	if err != nil {
+		panic(err)
+	}
+
 	// Register account
 	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
 	if err != nil {
@@ -73,17 +105,10 @@ func NewCertManager() *CertManager {
 	}
 	account.Registration = reg
 
-	// Add HTTP-01 challenge solver
-	err = client.Challenge.SetHTTP01Provider(http01.NewProviderServer("", "80"))
-	if err != nil {
-		panic(err)
-	}
-
 	return &CertManager{
 		client:       client,
 		account:      account,
 		certificates: make(map[string]*tls.Certificate),
-		challenges:   make(map[string]string),
 	}
 }
 

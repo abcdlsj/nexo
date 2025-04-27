@@ -1,0 +1,8 @@
+email: your-email@example.com
+cloudflare:
+  api_token: "your-cloudflare-api-token"  # 从Cloudflare获取的API Token
+proxies:
+  "example.com":
+    target: "http://localhost:8080"
+  "*.example.com":
+    target: "http://localhost:3000"
