@@ -193,6 +193,7 @@ func (s *Server) loadProxyConfigs() error {
 		domain    string
 		proxy     *httputil.ReverseProxy
 		targetURL *url.URL
+		err       error
 	}
 	results := make(chan proxySetup, len(proxies))
 
@@ -202,17 +203,20 @@ func (s *Server) loadProxyConfigs() error {
 		g.Go(func() error {
 			var proxyConfig ProxyConfig
 			if err := viper.UnmarshalKey("proxies."+domain, &proxyConfig); err != nil {
-				return fmt.Errorf("error parsing proxy config for domain %s: %v", domain, err)
+				results <- proxySetup{domain: domain, err: fmt.Errorf("error parsing proxy config: %v", err)}
+				return nil
 			}
 
 			targetURL, err := url.Parse(proxyConfig.Target)
 			if err != nil {
-				return fmt.Errorf("error parsing target URL for domain %s: %v", domain, err)
+				results <- proxySetup{domain: domain, err: fmt.Errorf("error parsing target URL: %v", err)}
+				return nil
 			}
 
 			// Check target accessibility
 			if err := s.checkTarget(targetURL); err != nil {
-				return fmt.Errorf("domain %s: %v", domain, err)
+				results <- proxySetup{domain: domain, err: fmt.Errorf("target not accessible: %v", err)}
+				return nil
 			}
 
 			// Create reverse proxy
@@ -220,19 +224,18 @@ func (s *Server) loadProxyConfigs() error {
 
 			// Request certificate
 			if err := s.certManager.ObtainCert(domain); err != nil {
-				return fmt.Errorf("error obtaining certificate for domain %s: %v", domain, err)
+				results <- proxySetup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
+				return nil
 			}
 
 			// Verify certificate
 			cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
-			if err != nil {
-				return fmt.Errorf("certificate verification failed for domain %s: %v", domain, err)
-			}
-			if cert == nil {
-				return fmt.Errorf("certificate not loaded for domain %s", domain)
+			if err != nil || cert == nil {
+				results <- proxySetup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
+				return nil
 			}
 
-			// Send result through channel
+			// Send successful result through channel
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -253,6 +256,10 @@ func (s *Server) loadProxyConfigs() error {
 	// Collect results
 	s.mu.Lock()
 	for result := range results {
+		if result.err != nil {
+			fmt.Printf("Warning: Failed to configure proxy for %s: %v\n", result.domain, result.err)
+			continue
+		}
 		s.proxies[result.domain] = result.proxy
 		fmt.Printf("Successfully configured proxy for %s -> %s\n", result.domain, result.targetURL.String())
 	}
