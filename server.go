@@ -14,13 +14,17 @@ import (
 )
 
 type Server struct {
-	certManager   *CertManager
-	proxies       map[string]*httputil.ReverseProxy
-	mu            sync.RWMutex
-	ctx           context.Context
-	cancel        context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	proxies map[string]*httputil.ReverseProxy
+
+	certManager *CertManager
+
 	failedCerts   map[string]time.Time
 	failedCertsMu sync.RWMutex
+
+	mu sync.RWMutex
 }
 
 func New() *Server {
@@ -52,15 +56,15 @@ func New() *Server {
 	}
 
 	// Start certificate renewal goroutine
-	go s.autoRenewCertificates()
+	go s.renewCerts()
 
 	// Start retry failed certificates goroutine
-	go s.retryFailedCertificates()
+	go s.retryCerts()
 
 	// Setup config file watcher
 	gViper.OnConfigChange(func(e fsnotify.Event) {
 		log.Info("Config file changed", "file", e.Name)
-		if err := s.reloadConfig(); err != nil {
+		if err := s.reload(); err != nil {
 			log.Error("Error reloading config", "err", err)
 		}
 	})
@@ -77,7 +81,7 @@ func (s *Server) Stop() {
 
 func (s *Server) Start() error {
 	// Load proxy configurations
-	if err := s.loadProxyConfigs(); err != nil {
+	if err := s.loadProxies(); err != nil {
 		log.Error("Failed to load proxy configs", "err", err)
 		return err
 	}
@@ -94,12 +98,12 @@ func (s *Server) Start() error {
 	return server.ListenAndServeTLS("", "")
 }
 
-func (s *Server) reloadConfig() error {
+func (s *Server) reload() error {
 	// 重新评估失败的证书记录
-	s.reevaluateFailedCerts()
+	s.checkFailedCerts()
 
 	// Reload proxy configurations
-	// loadProxyConfigs will handle the atomic swap of the proxy map
+	// loadProxies will handle the atomic swap of the proxy map
 	// only after successfully loading all new configurations
-	return s.loadProxyConfigs()
+	return s.loadProxies()
 }

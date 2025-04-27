@@ -17,7 +17,7 @@ func getWildcardDomain(domain string) string {
 	return "*." + parts[1]
 }
 
-func (s *Server) autoRenewCertificates() {
+func (s *Server) renewCerts() {
 	ticker := time.NewTicker(24 * time.Hour) // Check daily
 	defer ticker.Stop()
 
@@ -28,27 +28,27 @@ func (s *Server) autoRenewCertificates() {
 		case <-ticker.C:
 			s.mu.RLock()
 			// 收集所有需要的证书域名
-			certDomains := make(map[string]bool)
+			certs := make(map[string]bool)
 			for domain := range s.proxies {
 				// 获取域名的配置
-				var proxyConfig ProxyConfig
-				if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
+				var cfg ProxyConfig
+				if err := gViper.UnmarshalKey("proxies:"+domain, &cfg); err != nil {
 					log.Error("Error getting config", "domain", domain, "err", err)
 					continue
 				}
 
-				if proxyConfig.UseWildcardCert {
+				if cfg.UseWildcardCert {
 					if wildcardDomain := getWildcardDomain(domain); wildcardDomain != "" {
-						certDomains[wildcardDomain] = true
+						certs[wildcardDomain] = true
 					}
 				} else {
-					certDomains[domain] = true
+					certs[domain] = true
 				}
 			}
 			s.mu.RUnlock()
 
 			// 更新所有需要的证书
-			for domain := range certDomains {
+			for domain := range certs {
 				if err := s.certManager.ObtainCert(domain); err != nil {
 					log.Error("Error renewing certificate", "domain", domain, "err", err)
 				} else {

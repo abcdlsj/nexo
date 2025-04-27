@@ -128,14 +128,14 @@ func NewCertManager(cfg Config) *CertManager {
 	}
 
 	// Load existing certificates from disk
-	if err := cm.loadCertificatesFromDisk(); err != nil {
+	if err := cm.loadCerts(); err != nil {
 		log.Warn("Failed to load certificates from disk", "err", err)
 	}
 
 	return cm
 }
 
-func (cm *CertManager) loadCertificatesFromDisk() error {
+func (cm *CertManager) loadCerts() error {
 	files, err := os.ReadDir(cm.certDir)
 	if err != nil {
 		log.Error("Failed to read certificate directory", "err", err)
@@ -188,17 +188,17 @@ func (cm *CertManager) loadCertificatesFromDisk() error {
 	return nil
 }
 
-func (cm *CertManager) saveCertificateToDisk(domain string, certData *certificate.Resource) error {
+func (cm *CertManager) saveCert(domain string, cert *certificate.Resource) error {
 	// Save certificate
 	certPath := filepath.Join(cm.certDir, domain+".crt")
-	if err := os.WriteFile(certPath, certData.Certificate, 0600); err != nil {
+	if err := os.WriteFile(certPath, cert.Certificate, 0600); err != nil {
 		log.Error("Failed to save certificate", "err", err)
 		return err
 	}
 
 	// Save private key
 	keyPath := filepath.Join(cm.certDir, domain+".key")
-	if err := os.WriteFile(keyPath, certData.PrivateKey, 0600); err != nil {
+	if err := os.WriteFile(keyPath, cert.PrivateKey, 0600); err != nil {
 		log.Error("Failed to save private key", "err", err)
 		return err
 	}
@@ -255,7 +255,7 @@ func (cm *CertManager) ObtainCert(domain string) error {
 	}
 
 	// Save certificate to disk
-	if err := cm.saveCertificateToDisk(domain, certificates); err != nil {
+	if err := cm.saveCert(domain, certificates); err != nil {
 		return fmt.Errorf("failed to save certificate: %v", err)
 	}
 

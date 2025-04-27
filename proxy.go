@@ -102,7 +102,7 @@ func (s *Server) checkTarget(targetURL *url.URL) error {
 	return nil
 }
 
-func (s *Server) loadProxyConfigs() error {
+func (s *Server) loadProxies() error {
 	proxies := gViper.GetStringMap("proxies")
 	if len(proxies) == 0 {
 		return nil
@@ -110,56 +110,62 @@ func (s *Server) loadProxyConfigs() error {
 
 	g, ctx := errgroup.WithContext(context.Background())
 
-	type proxySetup struct {
-		domain    string
-		proxy     *httputil.ReverseProxy
-		targetURL *url.URL
-		err       error
+	type setup struct {
+		domain string
+		proxy  *httputil.ReverseProxy
+		target *url.URL
+		err    error
 	}
-	results := make(chan proxySetup, len(proxies))
+	results := make(chan setup, len(proxies))
 
-	wildcardCerts := make(map[string]bool)
-	wildcardDomainMap := make(map[string][]string)
+	wildcards := make(map[string]bool)
+	wildcardDomains := make(map[string][]string)
+
+	// Track which domains are in the new configuration
+	domains := make(map[string]bool)
+	for domain := range proxies {
+		domains[domain] = true
+	}
 
 	for domain := range proxies {
 		domain := domain
 		g.Go(func() error {
-			var proxyConfig ProxyConfig
-			if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
-				results <- proxySetup{domain: domain, err: fmt.Errorf("error parsing proxy config: %v", err)}
+			var cfg ProxyConfig
+			if err := gViper.UnmarshalKey("proxies:"+domain, &cfg); err != nil {
+				results <- setup{domain: domain, err: fmt.Errorf("error parsing proxy config: %v", err)}
 				return nil
 			}
 
-			targetURL, err := url.Parse(proxyConfig.Target)
+			target, err := url.Parse(cfg.Target)
 			if err != nil {
-				results <- proxySetup{domain: domain, err: fmt.Errorf("error parsing target URL: %v", err)}
+				results <- setup{domain: domain, err: fmt.Errorf("error parsing target URL: %v", err)}
 				return nil
 			}
 
-			if err := s.checkTarget(targetURL); err != nil {
-				results <- proxySetup{domain: domain, err: fmt.Errorf("target not accessible: %v", err)}
+			if err := s.checkTarget(target); err != nil {
+				results <- setup{domain: domain, err: fmt.Errorf("target not accessible: %v", err)}
 				return nil
 			}
 
-			proxy := s.createReverseProxy(targetURL, domain)
+			proxy := s.createReverseProxy(target, domain)
 
 			var certDomain string
-			if proxyConfig.UseWildcardCert {
+			if cfg.UseWildcardCert {
 				certDomain = getWildcardDomain(domain)
 				if certDomain == "" {
-					results <- proxySetup{domain: domain, err: fmt.Errorf("invalid domain for wildcard cert: %s", domain)}
+					results <- setup{domain: domain, err: fmt.Errorf("invalid domain for wildcard cert: %s", domain)}
 					return nil
 				}
-				wildcardCerts[certDomain] = true
+				wildcards[certDomain] = true
 				s.mu.Lock()
-				wildcardDomainMap[certDomain] = append(wildcardDomainMap[certDomain], domain)
+				wildcardDomains[certDomain] = append(wildcardDomains[certDomain], domain)
 				s.mu.Unlock()
 
 				if cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err == nil && cert != nil {
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
-					case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+					case results <- setup{domain: domain, proxy: proxy, target: target}:
 					}
 					return nil
 				}
@@ -167,20 +173,20 @@ func (s *Server) loadProxyConfigs() error {
 				certDomain = domain
 				if err := s.certManager.ObtainCert(certDomain); err != nil {
 					s.addFailedCert(domain, err)
-					results <- proxySetup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
+					results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
 					return nil
 				}
 
 				cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 				if err != nil || cert == nil {
-					results <- proxySetup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
+					results <- setup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
 					return nil
 				}
 
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+				case results <- setup{domain: domain, proxy: proxy, target: target}:
 				}
 			}
 
@@ -194,72 +200,66 @@ func (s *Server) loadProxyConfigs() error {
 	}
 	close(results)
 
+	// Find domains that were removed from configuration
+	s.mu.RLock()
+	var removed int
+	for domain := range s.proxies {
+		if !domains[domain] {
+			removed++
+			log.Info("Removing proxy configuration", "domain", domain)
+		}
+	}
+	s.mu.RUnlock()
+
 	// Phase 1: Obtain all wildcard certificates first
-	for wildcardDomain := range wildcardCerts {
-		if err := s.certManager.ObtainCert(wildcardDomain); err != nil {
+	for domain := range wildcards {
+		if err := s.certManager.ObtainCert(domain); err != nil {
 			log.Warn("Failed to obtain wildcard certificate",
-				"domain", wildcardDomain,
+				"domain", domain,
 				"err", err)
-			s.addFailedCert(wildcardDomain, err)
-			if domains, ok := wildcardDomainMap[wildcardDomain]; ok {
-				for _, domain := range domains {
-					log.Warn("Domain affected by wildcard certificate failure", "domain", domain)
+			s.addFailedCert(domain, err)
+			if affected, ok := wildcardDomains[domain]; ok {
+				for _, d := range affected {
+					log.Warn("Domain affected by wildcard certificate failure", "domain", d)
 				}
 			}
 			continue
 		}
 	}
 
-	// Phase 2: Prepare new proxy map but don't install it yet
+	// Phase 2: Update proxy configurations
 	newProxies := make(map[string]*httputil.ReverseProxy)
-	var successCount, errorCount int
-
-	// Track which domains are in the new configuration
-	configuredDomains := make(map[string]bool)
-	for domain := range proxies {
-		configuredDomains[domain] = true
-	}
+	var ok, fail int
 
 	for result := range results {
 		if result.err != nil {
 			log.Warn("Failed to configure proxy", "domain", result.domain, "err", result.err)
-			errorCount++
+			fail++
 			// Keep the existing proxy for failed domains if they were previously configured
-			if oldProxy, exists := s.proxies[result.domain]; exists && configuredDomains[result.domain] {
+			if oldProxy, exists := s.proxies[result.domain]; exists && domains[result.domain] {
 				newProxies[result.domain] = oldProxy
 				log.Info("Keeping existing proxy configuration", "domain", result.domain)
 			}
 			continue
 		}
 		newProxies[result.domain] = result.proxy
-		successCount++
+		ok++
 		log.Info("Successfully configured proxy",
 			"domain", result.domain,
-			"target", result.targetURL.String())
+			"target", result.target.String())
 	}
 
-	// Find domains that were removed from configuration
-	s.mu.RLock()
-	var removedCount int
-	for domain := range s.proxies {
-		if !configuredDomains[domain] {
-			removedCount++
-			log.Info("Removing proxy configuration", "domain", domain)
-		}
-	}
-	s.mu.RUnlock()
-
-	if successCount > 0 || removedCount > 0 {
+	if ok > 0 || removed > 0 {
 		s.mu.Lock()
 		s.proxies = newProxies
 		s.mu.Unlock()
 		log.Info("Updated proxy configurations",
-			"success", successCount,
-			"errors", errorCount,
-			"removed", removedCount,
+			"ok", ok,
+			"fail", fail,
+			"removed", removed,
 			"total", len(newProxies))
-	} else if errorCount > 0 {
-		log.Warn("No proxy configurations were successfully loaded", "errors", errorCount)
+	} else if fail > 0 {
+		log.Warn("No proxy configurations were successfully loaded", "errors", fail)
 	}
 
 	return nil
