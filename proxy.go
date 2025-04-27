@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -21,13 +22,34 @@ type ProxyConfig struct {
 
 func (s *Server) handleHTTPS() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 限制请求体大小为 10MB
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
+		// 检查并发连接限制
+		remoteAddr := r.RemoteAddr
+		if !s.trackConnection(remoteAddr) {
+			http.Error(w, "Too many connections", http.StatusServiceUnavailable)
+			return
+		}
+		defer s.removeConnection(remoteAddr)
+
+		host := strings.ToLower(r.Host)
+		if strings.Contains(host, ":") {
+			var err error
+			host, _, err = net.SplitHostPort(host)
+			if err != nil {
+				http.Error(w, "Invalid host", http.StatusBadRequest)
+				return
+			}
+		}
+
 		s.mu.RLock()
-		proxy, ok := s.proxies[r.Host]
+		proxy, ok := s.proxies[host]
 		s.mu.RUnlock()
 
 		if !ok {
 			// Try wildcard domain
-			parts := strings.SplitN(r.Host, ".", 2)
+			parts := strings.SplitN(host, ".", 2)
 			if len(parts) == 2 {
 				wildcardDomain := "*." + parts[1]
 				s.mu.RLock()
