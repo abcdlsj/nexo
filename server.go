@@ -84,6 +84,9 @@ func (s *Server) reloadConfig() error {
 	s.proxies = make(map[string]*httputil.ReverseProxy)
 	s.mu.Unlock()
 
+	// 重新评估失败的证书记录
+	s.reevaluateFailedCerts()
+
 	// Reload proxy configurations
 	return s.loadProxyConfigs()
 }
@@ -375,6 +378,17 @@ func (s *Server) loadProxyConfigs() error {
 				s.mu.Lock()
 				wildcardDomainMap[certDomain] = append(wildcardDomainMap[certDomain], domain)
 				s.mu.Unlock()
+
+				// 如果通配符证书已经存在且有效，不需要立即获取
+				if cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err == nil && cert != nil {
+					// Send successful result through channel
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+					}
+					return nil
+				}
 			} else {
 				certDomain = domain
 				// Request certificate for non-wildcard domain immediately
@@ -383,20 +397,20 @@ func (s *Server) loadProxyConfigs() error {
 					results <- proxySetup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
 					return nil
 				}
-			}
 
-			// Verify certificate
-			cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
-			if err != nil || cert == nil {
-				results <- proxySetup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
-				return nil
-			}
+				// Verify certificate for non-wildcard domain
+				cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+				if err != nil || cert == nil {
+					results <- proxySetup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
+					return nil
+				}
 
-			// Send successful result through channel
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+				// Send successful result through channel for non-wildcard domain
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+				}
 			}
 
 			return nil
@@ -475,4 +489,53 @@ func getWildcardDomain(domain string) string {
 		return ""
 	}
 	return "*." + parts[1]
+}
+
+// reevaluateFailedCerts 重新评估失败的证书记录
+func (s *Server) reevaluateFailedCerts() {
+	proxies := gViper.GetStringMap("proxies")
+	if len(proxies) == 0 {
+		return
+	}
+
+	s.failedCertsMu.Lock()
+	defer s.failedCertsMu.Unlock()
+
+	// 收集所有当前配置中需要的证书域名
+	currentCerts := make(map[string]bool)
+	for domain := range proxies {
+		var proxyConfig ProxyConfig
+		if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
+			fmt.Printf("Error parsing proxy config for %s: %v\n", domain, err)
+			continue
+		}
+
+		if proxyConfig.UseWildcardCert {
+			if wildcardDomain := getWildcardDomain(domain); wildcardDomain != "" {
+				currentCerts[wildcardDomain] = true
+			}
+		} else {
+			currentCerts[domain] = true
+		}
+	}
+
+	// 检查每个失败的证书记录
+	for domain := range s.failedCerts {
+		// 如果域名不再需要证书，或者配置已更改为使用通配符证书
+		if !currentCerts[domain] {
+			parts := strings.SplitN(domain, ".", 2)
+			if len(parts) == 2 {
+				wildcardDomain := "*." + parts[1]
+				// 如果该域名现在使用通配符证书，删除原来的失败记录
+				if currentCerts[wildcardDomain] {
+					delete(s.failedCerts, domain)
+					fmt.Printf("Removed failed cert record for %s as it now uses wildcard cert %s\n", domain, wildcardDomain)
+					continue
+				}
+			}
+			// 如果域名不再存在于当前配置中，也删除失败记录
+			delete(s.failedCerts, domain)
+			fmt.Printf("Removed failed cert record for %s as it is no longer in configuration\n", domain)
+		}
+	}
 }
