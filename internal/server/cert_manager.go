@@ -6,9 +6,11 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,7 @@ type CertManager struct {
 	certificates map[string]*tls.Certificate
 	challenges   map[string]string
 	mu           sync.RWMutex
+	certDir      string
 }
 
 type Account struct {
@@ -48,6 +51,21 @@ func (a *Account) GetPrivateKey() crypto.PrivateKey {
 }
 
 func NewCertManager() *CertManager {
+	// Get certificate directory from config
+	certDir := viper.GetString("cert_dir")
+	if certDir == "" {
+		baseDir := viper.GetString("base_dir")
+		if baseDir == "" {
+			panic("base_dir not found in config")
+		}
+		certDir = filepath.Join(baseDir, "certs")
+	}
+
+	// Create certificates directory with all parent directories
+	if err := os.MkdirAll(certDir, 0700); err != nil {
+		panic(fmt.Sprintf("Failed to create certificate directory: %v", err))
+	}
+
 	// Get Cloudflare credentials from config
 	cfAPIToken := viper.GetString("cloudflare.api_token")
 	if cfAPIToken == "" {
@@ -105,11 +123,87 @@ func NewCertManager() *CertManager {
 	}
 	account.Registration = reg
 
-	return &CertManager{
+	cm := &CertManager{
 		client:       client,
 		account:      account,
 		certificates: make(map[string]*tls.Certificate),
+		certDir:      certDir,
 	}
+
+	// Load existing certificates from disk
+	if err := cm.loadCertificatesFromDisk(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load certificates from disk: %v\n", err)
+	}
+
+	return cm
+}
+
+func (cm *CertManager) loadCertificatesFromDisk() error {
+	files, err := os.ReadDir(cm.certDir)
+	if err != nil {
+		return fmt.Errorf("failed to read certificate directory: %v", err)
+	}
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".crt") {
+			continue
+		}
+
+		domain := strings.TrimSuffix(f.Name(), ".crt")
+		certPath := filepath.Join(cm.certDir, f.Name())
+		keyPath := filepath.Join(cm.certDir, domain+".key")
+
+		certPEMBlock, err := os.ReadFile(certPath)
+		if err != nil {
+			continue
+		}
+
+		keyPEMBlock, err := os.ReadFile(keyPath)
+		if err != nil {
+			continue
+		}
+
+		cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+		if err != nil {
+			continue
+		}
+
+		// Parse the certificate to get the expiry date
+		if len(cert.Certificate) > 0 {
+			x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				continue
+			}
+			cert.Leaf = x509Cert
+
+			// Skip expired certificates
+			if time.Now().After(x509Cert.NotAfter) {
+				continue
+			}
+		}
+
+		cm.mu.Lock()
+		cm.certificates[domain] = &cert
+		cm.mu.Unlock()
+	}
+
+	return nil
+}
+
+func (cm *CertManager) saveCertificateToDisk(domain string, certData *certificate.Resource) error {
+	// Save certificate
+	certPath := filepath.Join(cm.certDir, domain+".crt")
+	if err := os.WriteFile(certPath, certData.Certificate, 0600); err != nil {
+		return fmt.Errorf("failed to save certificate: %v", err)
+	}
+
+	// Save private key
+	keyPath := filepath.Join(cm.certDir, domain+".key")
+	if err := os.WriteFile(keyPath, certData.PrivateKey, 0600); err != nil {
+		return fmt.Errorf("failed to save private key: %v", err)
+	}
+
+	return nil
 }
 
 func (cm *CertManager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -158,10 +252,24 @@ func (cm *CertManager) ObtainCert(domain string) error {
 		return err
 	}
 
-	// Save certificate
+	// Save certificate to disk
+	if err := cm.saveCertificateToDisk(domain, certificates); err != nil {
+		return fmt.Errorf("failed to save certificate: %v", err)
+	}
+
+	// Load into memory
 	tlsCert, err := tls.X509KeyPair(certificates.Certificate, certificates.PrivateKey)
 	if err != nil {
 		return err
+	}
+
+	// Parse the certificate to get the expiry date
+	if len(tlsCert.Certificate) > 0 {
+		x509Cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate: %v", err)
+		}
+		tlsCert.Leaf = x509Cert
 	}
 
 	cm.mu.Lock()

@@ -65,6 +65,11 @@ func initConfig() {
 				os.Exit(1)
 			}
 
+			// Set base directory in viper config
+			viper.Set("base_dir", configDir)
+			// Set default cert directory
+			viper.Set("cert_dir", filepath.Join(configDir, "certs"))
+
 			configFile := filepath.Join(configDir, "config.yaml")
 			viper.SetConfigFile(configFile)
 			if err := viper.SafeWriteConfig(); err != nil {
