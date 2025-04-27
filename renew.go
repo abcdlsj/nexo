@@ -1,9 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 )
 
 // getWildcardDomain returns the wildcard domain for a given domain
@@ -32,7 +33,7 @@ func (s *Server) autoRenewCertificates() {
 				// 获取域名的配置
 				var proxyConfig ProxyConfig
 				if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
-					fmt.Printf("Error getting config for %s: %v\n", domain, err)
+					log.Error("Error getting config", "domain", domain, "err", err)
 					continue
 				}
 
@@ -49,9 +50,9 @@ func (s *Server) autoRenewCertificates() {
 			// 更新所有需要的证书
 			for domain := range certDomains {
 				if err := s.certManager.ObtainCert(domain); err != nil {
-					fmt.Printf("Error renewing certificate for %s: %v\n", domain, err)
+					log.Error("Error renewing certificate", "domain", domain, "err", err)
 				} else {
-					fmt.Printf("Successfully renewed certificate for %s\n", domain)
+					log.Info("Successfully renewed certificate", "domain", domain)
 				}
 			}
 		}

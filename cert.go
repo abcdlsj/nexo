@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
@@ -59,28 +60,26 @@ func (a *Account) GetPrivateKey() crypto.PrivateKey {
 func NewCertManager(cfg Config) *CertManager {
 	// Validate configuration
 	if cfg.CertDir == "" {
-		panic("cert_dir not provided in config")
+		log.Fatal("cert_dir not provided in config")
 	}
 
 	if cfg.CFAPIToken == "" {
-		fmt.Fprintf(os.Stderr, "Error: Cloudflare API token not found in config\n")
-		os.Exit(1)
+		log.Fatal("Cloudflare API token not found in config")
 	}
 
 	if cfg.Email == "" {
-		fmt.Fprintf(os.Stderr, "Error: Email not found in config\n")
-		os.Exit(1)
+		log.Fatal("Email not found in config")
 	}
 
 	// Create certificates directory with all parent directories
 	if err := os.MkdirAll(cfg.CertDir, 0700); err != nil {
-		panic(fmt.Sprintf("Failed to create certificate directory: %v", err))
+		log.Fatal("Failed to create certificate directory", "err", err)
 	}
 
 	// Create account private key
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Generate ecdsa private key failed")
 	}
 
 	account := &Account{
@@ -94,7 +93,7 @@ func NewCertManager(cfg Config) *CertManager {
 
 	client, err := lego.NewClient(config)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Create lego client failed")
 	}
 
 	// Configure Cloudflare DNS provider
@@ -105,19 +104,19 @@ func NewCertManager(cfg Config) *CertManager {
 		PollingInterval:    2 * time.Second,
 	})
 	if err != nil {
-		panic(err)
+		log.Fatal("Create cloudflare DNS provider failed")
 	}
 
 	// Set Cloudflare as DNS provider
 	err = client.Challenge.SetDNS01Provider(cfProvider)
 	if err != nil {
-		panic(err)
+		log.Fatal("Set DNS01 provider failed")
 	}
 
 	// Register account
 	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
 	if err != nil {
-		panic(err)
+		log.Fatal("Register account failed")
 	}
 	account.Registration = reg
 
@@ -130,7 +129,7 @@ func NewCertManager(cfg Config) *CertManager {
 
 	// Load existing certificates from disk
 	if err := cm.loadCertificatesFromDisk(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to load certificates from disk: %v\n", err)
+		log.Warn("Failed to load certificates from disk", "err", err)
 	}
 
 	return cm
@@ -139,7 +138,8 @@ func NewCertManager(cfg Config) *CertManager {
 func (cm *CertManager) loadCertificatesFromDisk() error {
 	files, err := os.ReadDir(cm.certDir)
 	if err != nil {
-		return fmt.Errorf("failed to read certificate directory: %v", err)
+		log.Error("Failed to read certificate directory", "err", err)
+		return err
 	}
 
 	for _, f := range files {
@@ -192,13 +192,15 @@ func (cm *CertManager) saveCertificateToDisk(domain string, certData *certificat
 	// Save certificate
 	certPath := filepath.Join(cm.certDir, domain+".crt")
 	if err := os.WriteFile(certPath, certData.Certificate, 0600); err != nil {
-		return fmt.Errorf("failed to save certificate: %v", err)
+		log.Error("Failed to save certificate", "err", err)
+		return err
 	}
 
 	// Save private key
 	keyPath := filepath.Join(cm.certDir, domain+".key")
 	if err := os.WriteFile(keyPath, certData.PrivateKey, 0600); err != nil {
-		return fmt.Errorf("failed to save private key: %v", err)
+		log.Error("Failed to save private key", "err", err)
+		return err
 	}
 
 	return nil
@@ -223,7 +225,9 @@ func (cm *CertManager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certific
 	}
 
 	if !ok {
-		return nil, fmt.Errorf("no certificate found for domain: %s", domain)
+		err := fmt.Errorf("no certificate found for domain: %s", domain)
+		log.Error("Certificate not found", "domain", domain, "err", err)
+		return nil, err
 	}
 
 	return cert, nil

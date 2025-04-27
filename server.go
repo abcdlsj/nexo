@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -31,7 +31,7 @@ func New() *Server {
 	if certDir == "" {
 		baseDir := gViper.GetString("base_dir")
 		if baseDir == "" {
-			panic("base_dir not found in config")
+			log.Fatal("base_dir not found in config")
 		}
 		certDir = filepath.Join(baseDir, "certs")
 	}
@@ -59,9 +59,9 @@ func New() *Server {
 
 	// Setup config file watcher
 	gViper.OnConfigChange(func(e fsnotify.Event) {
-		fmt.Printf("Config file changed: %s\n", e.Name)
+		log.Info("Config file changed", "file", e.Name)
 		if err := s.reloadConfig(); err != nil {
-			fmt.Printf("Error reloading config: %v\n", err)
+			log.Error("Error reloading config", "err", err)
 		}
 	})
 	gViper.WatchConfig()
@@ -78,7 +78,8 @@ func (s *Server) Stop() {
 func (s *Server) Start() error {
 	// Load proxy configurations
 	if err := s.loadProxyConfigs(); err != nil {
-		return fmt.Errorf("failed to load proxy configs: %v", err)
+		log.Error("Failed to load proxy configs", "err", err)
+		return err
 	}
 
 	// Start HTTPS server

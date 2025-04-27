@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/log"
 )
 
 func (s *Server) retryFailedCertificates() {
@@ -28,38 +29,38 @@ func (s *Server) retryFailedCertificates() {
 			s.failedCertsMu.RUnlock()
 
 			for _, domain := range domainsToRetry {
-				fmt.Printf("Retrying certificate acquisition for %s\n", domain)
+				log.Info("Retrying certificate acquisition", "domain", domain)
 				if err := s.certManager.ObtainCert(domain); err != nil {
-					fmt.Printf("Retry failed for %s: %v\n", domain, err)
+					log.Error("Retry failed", "domain", domain, "err", err)
 					s.addFailedCert(domain, err)
 				} else {
-					fmt.Printf("Successfully obtained certificate for %s\n", domain)
+					log.Info("Successfully obtained certificate", "domain", domain)
 					s.failedCertsMu.Lock()
 					delete(s.failedCerts, domain)
 					s.failedCertsMu.Unlock()
 
 					if strings.HasPrefix(domain, "*.") {
-						fmt.Printf("Successfully obtained wildcard certificate for %s, reloading all proxy configurations\n", domain)
+						log.Info("Successfully obtained wildcard certificate, reloading all proxy configurations", "domain", domain)
 						if err := s.reloadConfig(); err != nil {
-							fmt.Printf("Error reloading config after successful wildcard cert retry: %v\n", err)
+							log.Error("Error reloading config after successful wildcard cert retry", "err", err)
 						}
 					} else {
 						var proxyConfig ProxyConfig
 						if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
-							fmt.Printf("Error loading proxy config for %s after cert retry: %v\n", domain, err)
+							log.Error("Error loading proxy config after cert retry", "domain", domain, "err", err)
 							continue
 						}
 
 						targetURL, err := url.Parse(proxyConfig.Target)
 						if err != nil {
-							fmt.Printf("Error parsing target URL for %s after cert retry: %v\n", domain, err)
+							log.Error("Error parsing target URL after cert retry", "domain", domain, "err", err)
 							continue
 						}
 
 						s.mu.Lock()
 						s.proxies[domain] = s.createReverseProxy(targetURL, domain)
 						s.mu.Unlock()
-						fmt.Printf("Successfully reconfigured proxy for %s\n", domain)
+						log.Info("Successfully reconfigured proxy", "domain", domain)
 					}
 				}
 			}
@@ -87,7 +88,9 @@ func (s *Server) addFailedCert(domain string, err error) {
 	s.failedCertsMu.Lock()
 	s.failedCerts[domain] = retryTime
 	s.failedCertsMu.Unlock()
-	fmt.Printf("Added %s to retry queue, will retry after %v\n", domain, retryTime.Format("2006-01-02 15:04:05 UTC"))
+	log.Info("Added domain to retry queue",
+		"domain", domain,
+		"retry_time", retryTime.Format("2006-01-02 15:04:05 UTC"))
 }
 
 func (s *Server) reevaluateFailedCerts() {
@@ -103,7 +106,7 @@ func (s *Server) reevaluateFailedCerts() {
 	for domain := range proxies {
 		var proxyConfig ProxyConfig
 		if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
-			fmt.Printf("Error parsing proxy config for %s: %v\n", domain, err)
+			log.Error("Error parsing proxy config", "domain", domain, "err", err)
 			continue
 		}
 
@@ -123,12 +126,14 @@ func (s *Server) reevaluateFailedCerts() {
 				wildcardDomain := "*." + parts[1]
 				if currentCerts[wildcardDomain] {
 					delete(s.failedCerts, domain)
-					fmt.Printf("Removed failed cert record for %s as it now uses wildcard cert %s\n", domain, wildcardDomain)
+					log.Info("Removed failed cert record as it now uses wildcard cert",
+						"domain", domain,
+						"wildcard_domain", wildcardDomain)
 					continue
 				}
 			}
 			delete(s.failedCerts, domain)
-			fmt.Printf("Removed failed cert record for %s as it is no longer in configuration\n", domain)
+			log.Info("Removed failed cert record as it is no longer in configuration", "domain", domain)
 		}
 	}
 }

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -33,6 +33,10 @@ func GetViper() *viper.Viper {
 }
 
 func init() {
+	// Configure logger
+	log.SetReportTimestamp(true)
+	log.SetTimeFormat("2006-01-02 15:04:05")
+
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/nexo/config.yaml)")
 }
@@ -64,7 +68,7 @@ func initConfig() {
 	if os.Getuid() != 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting home directory: %v\n", err)
+			log.Error("Error getting home directory", "err", err)
 			os.Exit(1)
 		}
 		configDir = filepath.Join(home, ".nexo")
@@ -74,7 +78,7 @@ func initConfig() {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			// Config file not found, create it with default values
 			if err := os.MkdirAll(configDir, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
+				log.Error("Error creating config directory", "err", err)
 				os.Exit(1)
 			}
 
@@ -86,12 +90,12 @@ func initConfig() {
 			gViper.Set("cert_dir", filepath.Join(configDir, "certs"))
 
 			if err := gViper.SafeWriteConfig(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating config file: %v\n", err)
+				log.Error("Error creating config file", "err", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Created default config file at: %s\n", configFile)
+			log.Info("Created default config file", "path", configFile)
 		} else {
-			fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+			log.Error("Error reading config file", "err", err)
 			os.Exit(1)
 		}
 	}
@@ -102,17 +106,17 @@ func initConfig() {
 		gViper.Set("cert_dir", filepath.Join(configDir, "certs"))
 		// Save the updated config
 		if err := SaveConfig(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving config with base directory: %v\n", err)
+			log.Error("Error saving config with base directory", "err", err)
 			os.Exit(1)
 		}
 	}
 
-	fmt.Printf("Using config file: %s\n", gViper.ConfigFileUsed())
-	fmt.Printf("Base directory: %s\n", gViper.GetString("base_dir"))
+	log.Info("Using config file", "path", gViper.ConfigFileUsed())
+	log.Info("Base directory", "path", gViper.GetString("base_dir"))
 
 	// Validate required configuration
 	if gViper.GetString("cloudflare:api_token") == "" {
-		fmt.Fprintf(os.Stderr, "Error: Cloudflare API token not configured. Please set it in the config file.\n")
+		log.Error("Cloudflare API token not configured. Please set it in the config file.")
 		os.Exit(1)
 	}
 }
@@ -124,7 +128,7 @@ func SaveConfig() error {
 
 func main() {
 	if err := Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		log.Error("Error executing command", "err", err)
 		os.Exit(1)
 	}
 }

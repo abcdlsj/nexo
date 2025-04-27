@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -76,7 +77,7 @@ func (s *Server) createReverseProxy(targetURL *url.URL, domain string) *httputil
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		fmt.Printf("Proxy error for %s: %v\n", domain, err)
+		log.Error("Proxy error", "domain", domain, "err", err)
 		http.Error(w, "Proxy Error", http.StatusBadGateway)
 	}
 
@@ -195,11 +196,13 @@ func (s *Server) loadProxyConfigs() error {
 
 	for wildcardDomain := range wildcardCerts {
 		if err := s.certManager.ObtainCert(wildcardDomain); err != nil {
-			fmt.Printf("Warning: Failed to obtain wildcard certificate for %s: %v\n", wildcardDomain, err)
+			log.Warn("Failed to obtain wildcard certificate",
+				"domain", wildcardDomain,
+				"err", err)
 			s.addFailedCert(wildcardDomain, err)
 			if domains, ok := wildcardDomainMap[wildcardDomain]; ok {
 				for _, domain := range domains {
-					fmt.Printf("Warning: Domain %s affected by wildcard certificate failure\n", domain)
+					log.Warn("Domain affected by wildcard certificate failure", "domain", domain)
 				}
 			}
 			continue
@@ -209,11 +212,13 @@ func (s *Server) loadProxyConfigs() error {
 	s.mu.Lock()
 	for result := range results {
 		if result.err != nil {
-			fmt.Printf("Warning: Failed to configure proxy for %s: %v\n", result.domain, result.err)
+			log.Warn("Failed to configure proxy", "domain", result.domain, "err", result.err)
 			continue
 		}
 		s.proxies[result.domain] = result.proxy
-		fmt.Printf("Successfully configured proxy for %s -> %s\n", result.domain, result.targetURL.String())
+		log.Info("Successfully configured proxy",
+			"domain", result.domain,
+			"target", result.targetURL.String())
 	}
 	s.mu.Unlock()
 
