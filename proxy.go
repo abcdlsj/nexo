@@ -111,15 +111,14 @@ func (s *Server) loadProxies() error {
 	g, ctx := errgroup.WithContext(context.Background())
 
 	type setup struct {
-		domain string
-		proxy  *httputil.ReverseProxy
-		target *url.URL
-		err    error
+		domain     string
+		proxy      *httputil.ReverseProxy
+		target     *url.URL
+		certDomain string
+
+		err error
 	}
 	results := make(chan setup, len(proxies))
-
-	wildcards := make(map[string]bool)
-	wildcardDomains := make(map[string][]string)
 
 	// Track which domains are in the new configuration
 	domains := make(map[string]bool)
@@ -156,37 +155,49 @@ func (s *Server) loadProxies() error {
 					results <- setup{domain: domain, err: fmt.Errorf("invalid domain for wildcard cert: %s", domain)}
 					return nil
 				}
-				wildcards[certDomain] = true
-				s.mu.Lock()
-				wildcardDomains[certDomain] = append(wildcardDomains[certDomain], domain)
-				s.mu.Unlock()
 
 				if cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err == nil && cert != nil {
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
-					case results <- setup{domain: domain, proxy: proxy, target: target}:
+					case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
 					}
 					return nil
+				} else {
+					log.Info("Wildcard certificate not found, obtaining certificate", "domain", domain)
+					if err := s.certManager.ObtainCert(certDomain); err != nil {
+						s.addFailedCert(domain, err)
+						results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
+						return nil
+					} else {
+						log.Info("Successfully obtained wildcard certificate", "domain", domain)
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
+						}
+						return nil
+					}
 				}
 			} else {
 				certDomain = domain
-				if err := s.certManager.ObtainCert(certDomain); err != nil {
-					s.addFailedCert(domain, err)
-					results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
-					return nil
-				}
 
 				cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 				if err != nil || cert == nil {
 					results <- setup{domain: domain, err: fmt.Errorf("certificate verification failed: %v", err)}
 					return nil
-				}
+				} else {
+					if err := s.certManager.ObtainCert(certDomain); err != nil {
+						s.addFailedCert(domain, err)
+						results <- setup{domain: domain, err: fmt.Errorf("error obtaining certificate: %v", err)}
+						return nil
+					}
 
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case results <- setup{domain: domain, proxy: proxy, target: target}:
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case results <- setup{domain: domain, proxy: proxy, target: target, certDomain: certDomain}:
+					}
 				}
 			}
 
@@ -211,23 +222,7 @@ func (s *Server) loadProxies() error {
 	}
 	s.mu.RUnlock()
 
-	// Phase 1: Obtain all wildcard certificates first
-	for domain := range wildcards {
-		if err := s.certManager.ObtainCert(domain); err != nil {
-			log.Warn("Failed to obtain wildcard certificate",
-				"domain", domain,
-				"err", err)
-			s.addFailedCert(domain, err)
-			if affected, ok := wildcardDomains[domain]; ok {
-				for _, d := range affected {
-					log.Warn("Domain affected by wildcard certificate failure", "domain", d)
-				}
-			}
-			continue
-		}
-	}
-
-	// Phase 2: Update proxy configurations
+	// Update proxy configurations
 	newProxies := make(map[string]*httputil.ReverseProxy)
 	var ok, fail int
 
@@ -246,7 +241,8 @@ func (s *Server) loadProxies() error {
 		ok++
 		log.Info("Successfully configured proxy",
 			"domain", result.domain,
-			"target", result.target.String())
+			"target", result.target.String(),
+			"certdomain", result.certDomain)
 	}
 
 	if ok > 0 || removed > 0 {
