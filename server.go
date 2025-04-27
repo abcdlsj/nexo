@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,8 +33,26 @@ type ProxyConfig struct {
 
 func New() *Server {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Get certificate directory from config
+	certDir := gViper.GetString("cert_dir")
+	if certDir == "" {
+		baseDir := gViper.GetString("base_dir")
+		if baseDir == "" {
+			panic("base_dir not found in config")
+		}
+		certDir = filepath.Join(baseDir, "certs")
+	}
+
+	// Create CertManager configuration
+	certConfig := Config{
+		CertDir:    certDir,
+		Email:      gViper.GetString("email"),
+		CFAPIToken: gViper.GetString("cloudflare:api_token"),
+	}
+
 	s := &Server{
-		certManager: NewCertManager(),
+		certManager: NewCertManager(certConfig),
 		proxies:     make(map[string]*httputil.ReverseProxy),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -48,13 +66,13 @@ func New() *Server {
 	go s.retryFailedCertificates()
 
 	// Setup config file watcher
-	viper.OnConfigChange(func(e fsnotify.Event) {
+	gViper.OnConfigChange(func(e fsnotify.Event) {
 		fmt.Printf("Config file changed: %s\n", e.Name)
 		if err := s.reloadConfig(); err != nil {
 			fmt.Printf("Error reloading config: %v\n", err)
 		}
 	})
-	viper.WatchConfig()
+	gViper.WatchConfig()
 
 	return s
 }
@@ -257,7 +275,7 @@ func (s *Server) addFailedCert(domain string, err error) {
 }
 
 func (s *Server) loadProxyConfigs() error {
-	proxies := viper.GetStringMap("proxies")
+	proxies := gViper.GetStringMap("proxies")
 	if len(proxies) == 0 {
 		return nil
 	}
@@ -279,7 +297,7 @@ func (s *Server) loadProxyConfigs() error {
 		domain := domain // Create new variable for goroutine
 		g.Go(func() error {
 			var proxyConfig ProxyConfig
-			if err := viper.UnmarshalKey("proxies."+domain, &proxyConfig); err != nil {
+			if err := gViper.UnmarshalKey("proxies:"+domain, &proxyConfig); err != nil {
 				results <- proxySetup{domain: domain, err: fmt.Errorf("error parsing proxy config: %v", err)}
 				return nil
 			}

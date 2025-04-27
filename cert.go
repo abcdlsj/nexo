@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"crypto"
@@ -20,8 +20,14 @@ import (
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/registration"
-	"github.com/spf13/viper"
 )
+
+// Config holds all the configuration needed for CertManager
+type Config struct {
+	CertDir    string
+	Email      string
+	CFAPIToken string
+}
 
 type CertManager struct {
 	client       *lego.Client
@@ -50,33 +56,25 @@ func (a *Account) GetPrivateKey() crypto.PrivateKey {
 	return a.key
 }
 
-func NewCertManager() *CertManager {
-	// Get certificate directory from config
-	certDir := viper.GetString("cert_dir")
-	if certDir == "" {
-		baseDir := viper.GetString("base_dir")
-		if baseDir == "" {
-			panic("base_dir not found in config")
-		}
-		certDir = filepath.Join(baseDir, "certs")
+func NewCertManager(cfg Config) *CertManager {
+	// Validate configuration
+	if cfg.CertDir == "" {
+		panic("cert_dir not provided in config")
 	}
 
-	// Create certificates directory with all parent directories
-	if err := os.MkdirAll(certDir, 0700); err != nil {
-		panic(fmt.Sprintf("Failed to create certificate directory: %v", err))
-	}
-
-	// Get Cloudflare credentials from config
-	cfAPIToken := viper.GetString("cloudflare.api_token")
-	if cfAPIToken == "" {
+	if cfg.CFAPIToken == "" {
 		fmt.Fprintf(os.Stderr, "Error: Cloudflare API token not found in config\n")
 		os.Exit(1)
 	}
 
-	email := viper.GetString("email")
-	if email == "" {
+	if cfg.Email == "" {
 		fmt.Fprintf(os.Stderr, "Error: Email not found in config\n")
 		os.Exit(1)
+	}
+
+	// Create certificates directory with all parent directories
+	if err := os.MkdirAll(cfg.CertDir, 0700); err != nil {
+		panic(fmt.Sprintf("Failed to create certificate directory: %v", err))
 	}
 
 	// Create account private key
@@ -86,7 +84,7 @@ func NewCertManager() *CertManager {
 	}
 
 	account := &Account{
-		Email: email,
+		Email: cfg.Email,
 		key:   privateKey,
 	}
 
@@ -101,10 +99,10 @@ func NewCertManager() *CertManager {
 
 	// Configure Cloudflare DNS provider
 	cfProvider, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
-		AuthToken:          cfAPIToken,
+		AuthToken:          cfg.CFAPIToken,
 		TTL:                120,
-		PropagationTimeout: 180 * time.Second, // DNS传播等待时间
-		PollingInterval:    2 * time.Second,   // DNS检查间隔
+		PropagationTimeout: 180 * time.Second,
+		PollingInterval:    2 * time.Second,
 	})
 	if err != nil {
 		panic(err)
@@ -127,7 +125,7 @@ func NewCertManager() *CertManager {
 		client:       client,
 		account:      account,
 		certificates: make(map[string]*tls.Certificate),
-		certDir:      certDir,
+		certDir:      cfg.CertDir,
 	}
 
 	// Load existing certificates from disk
