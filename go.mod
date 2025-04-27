@@ -1,11 +1,14 @@
 module github.com/abcdlsj/nexo
 
-go 1.21
+go 1.23.0
+
+toolchain go1.23.4
 
 require (
 	github.com/go-acme/lego/v4 v4.15.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
+	golang.org/x/sync v0.13.0
 )
 
 require (

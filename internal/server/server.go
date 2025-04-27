@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -11,12 +12,15 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"golang.org/x/sync/errgroup"
 )
 
 type Server struct {
 	certManager *CertManager
 	proxies     map[string]*httputil.ReverseProxy
 	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 type ProxyConfig struct {
@@ -24,9 +28,48 @@ type ProxyConfig struct {
 }
 
 func New() *Server {
-	return &Server{
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Server{
 		certManager: NewCertManager(),
 		proxies:     make(map[string]*httputil.ReverseProxy),
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+
+	// Start certificate renewal goroutine
+	go s.autoRenewCertificates()
+
+	return s
+}
+
+func (s *Server) autoRenewCertificates() {
+	ticker := time.NewTicker(24 * time.Hour) // Check daily
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.mu.RLock()
+			domains := make([]string, 0, len(s.proxies))
+			for domain := range s.proxies {
+				domains = append(domains, domain)
+			}
+			s.mu.RUnlock()
+
+			for _, domain := range domains {
+				if err := s.certManager.ObtainCert(domain); err != nil {
+					fmt.Printf("Error renewing certificate for %s: %v\n", domain, err)
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) Stop() {
+	if s.cancel != nil {
+		s.cancel()
 	}
 }
 
@@ -118,42 +161,82 @@ func (s *Server) createReverseProxy(targetURL *url.URL, domain string) *httputil
 
 func (s *Server) loadProxyConfigs() error {
 	proxies := viper.GetStringMap("proxies")
-	for domain := range proxies {
-		var proxyConfig ProxyConfig
-		if err := viper.UnmarshalKey("proxies."+domain, &proxyConfig); err != nil {
-			return fmt.Errorf("error parsing proxy config for domain %s: %v", domain, err)
-		}
-
-		targetURL, err := url.Parse(proxyConfig.Target)
-		if err != nil {
-			return fmt.Errorf("error parsing target URL for domain %s: %v", domain, err)
-		}
-
-		// 检查目标地址是否可访问
-		if err := s.checkTarget(targetURL); err != nil {
-			return fmt.Errorf("domain %s: %v", domain, err)
-		}
-
-		s.mu.Lock()
-		s.proxies[domain] = s.createReverseProxy(targetURL, domain)
-		s.mu.Unlock()
-
-		// Request certificate for the domain
-		if err := s.certManager.ObtainCert(domain); err != nil {
-			return fmt.Errorf("error obtaining certificate for domain %s: %v", domain, err)
-		}
-
-		// 验证证书是否正确加载
-		cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
-		if err != nil {
-			return fmt.Errorf("certificate verification failed for domain %s: %v", domain, err)
-		}
-		if cert == nil {
-			return fmt.Errorf("certificate not loaded for domain %s", domain)
-		}
-
-		fmt.Printf("Successfully configured proxy for %s -> %s\n", domain, targetURL.String())
+	if len(proxies) == 0 {
+		return nil
 	}
+
+	// Create error group with context
+	g, ctx := errgroup.WithContext(context.Background())
+
+	// Channel to collect results
+	type proxySetup struct {
+		domain    string
+		proxy     *httputil.ReverseProxy
+		targetURL *url.URL
+	}
+	results := make(chan proxySetup, len(proxies))
+
+	// Process each domain in parallel
+	for domain := range proxies {
+		domain := domain // Create new variable for goroutine
+		g.Go(func() error {
+			var proxyConfig ProxyConfig
+			if err := viper.UnmarshalKey("proxies."+domain, &proxyConfig); err != nil {
+				return fmt.Errorf("error parsing proxy config for domain %s: %v", domain, err)
+			}
+
+			targetURL, err := url.Parse(proxyConfig.Target)
+			if err != nil {
+				return fmt.Errorf("error parsing target URL for domain %s: %v", domain, err)
+			}
+
+			// Check target accessibility
+			if err := s.checkTarget(targetURL); err != nil {
+				return fmt.Errorf("domain %s: %v", domain, err)
+			}
+
+			// Create reverse proxy
+			proxy := s.createReverseProxy(targetURL, domain)
+
+			// Request certificate
+			if err := s.certManager.ObtainCert(domain); err != nil {
+				return fmt.Errorf("error obtaining certificate for domain %s: %v", domain, err)
+			}
+
+			// Verify certificate
+			cert, err := s.certManager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+			if err != nil {
+				return fmt.Errorf("certificate verification failed for domain %s: %v", domain, err)
+			}
+			if cert == nil {
+				return fmt.Errorf("certificate not loaded for domain %s", domain)
+			}
+
+			// Send result through channel
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case results <- proxySetup{domain: domain, proxy: proxy, targetURL: targetURL}:
+			}
+
+			return nil
+		})
+	}
+
+	// Wait for all goroutines to complete
+	if err := g.Wait(); err != nil {
+		close(results)
+		return err
+	}
+	close(results)
+
+	// Collect results
+	s.mu.Lock()
+	for result := range results {
+		s.proxies[result.domain] = result.proxy
+		fmt.Printf("Successfully configured proxy for %s -> %s\n", result.domain, result.targetURL.String())
+	}
+	s.mu.Unlock()
 
 	return nil
 }
