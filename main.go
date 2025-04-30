@@ -68,8 +68,7 @@ func initConfig() {
 	if os.Getuid() != 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Error("Error getting home directory", "err", err)
-			os.Exit(1)
+			log.Fatal("Error getting home directory", "err", err)
 		}
 		configDir = filepath.Join(home, ".nexo")
 	}
@@ -78,8 +77,7 @@ func initConfig() {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
 			// Config file not found, create it with default values
 			if err := os.MkdirAll(configDir, 0755); err != nil {
-				log.Error("Error creating config directory", "err", err)
-				os.Exit(1)
+				log.Fatal("Error creating config directory", "err", err)
 			}
 
 			configFile := filepath.Join(configDir, "config.yaml")
@@ -90,13 +88,11 @@ func initConfig() {
 			gViper.Set("cert_dir", filepath.Join(configDir, "certs"))
 
 			if err := gViper.SafeWriteConfig(); err != nil {
-				log.Error("Error creating config file", "err", err)
-				os.Exit(1)
+				log.Fatal("Error creating config file", "err", err)
 			}
 			log.Info("Created default config file", "path", configFile)
 		} else {
-			log.Error("Error reading config file", "err", err)
-			os.Exit(1)
+			log.Fatal("Error reading config file", "err", err)
 		}
 	}
 
@@ -106,8 +102,7 @@ func initConfig() {
 		gViper.Set("cert_dir", filepath.Join(configDir, "certs"))
 		// Save the updated config
 		if err := SaveConfig(); err != nil {
-			log.Error("Error saving config with base directory", "err", err)
-			os.Exit(1)
+			log.Fatal("Error saving config with base directory", "err", err)
 		}
 	}
 
@@ -116,8 +111,7 @@ func initConfig() {
 
 	// Validate required configuration
 	if gViper.GetString("cloudflare:api_token") == "" {
-		log.Error("Cloudflare API token not configured. Please set it in the config file.")
-		os.Exit(1)
+		log.Fatal("Cloudflare API token not configured. Please set it in the config file.")
 	}
 }
 
@@ -128,7 +122,6 @@ func SaveConfig() error {
 
 func main() {
 	if err := Execute(); err != nil {
-		log.Error("Error executing command", "err", err)
-		os.Exit(1)
+		log.Fatal("Error executing command", "err", err)
 	}
 }
