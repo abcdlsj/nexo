@@ -3,36 +3,21 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
-	"golang.org/x/time/rate"
 )
 
-type limiterWithTime struct {
-	limiter    *rate.Limiter
-	lastAccess time.Time
-}
-
-type failureRecord struct {
-	count     int
-	firstFail time.Time
-	lastFail  time.Time
-}
-
 type Server struct {
-	ctx context.Context
-	c   context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	proxies map[string]*httputil.ReverseProxy
 
@@ -42,21 +27,6 @@ type Server struct {
 	failCertsMu sync.RWMutex
 
 	mu sync.RWMutex
-
-	// Rate limiter for TLS handshakes
-	limiters   map[string]*limiterWithTime
-	limitersMu sync.RWMutex
-
-	// IP ban system
-	failures   map[string]*failureRecord
-	failuresMu sync.RWMutex
-	banned     map[string]time.Time
-	bannedMu   sync.RWMutex
-
-	// 并发连接控制
-	connCount   int32
-	maxConns    int32
-	activeConns sync.Map
 }
 
 type tcpKeepAliveListener struct {
@@ -97,12 +67,8 @@ func New() *Server {
 		certm:     NewCertManager(certConfig),
 		proxies:   make(map[string]*httputil.ReverseProxy),
 		ctx:       ctx,
-		c:         cancel,
+		cancel:    cancel,
 		failCerts: make(map[string]time.Time),
-		limiters:  make(map[string]*limiterWithTime),
-		failures:  make(map[string]*failureRecord),
-		banned:    make(map[string]time.Time),
-		maxConns:  100, // 最大并发连接数
 	}
 
 	// Start certificate renewal goroutine
@@ -110,12 +76,6 @@ func New() *Server {
 
 	// Start retry failed certificates goroutine
 	go s.retryCerts()
-
-	// Start cleanup for rate limiters
-	go s.cleanupLimiters()
-
-	// Start cleanup for failures and bans
-	go s.cleanupFailuresAndBans()
 
 	// Setup config file watcher
 	gViper.OnConfigChange(func(e fsnotify.Event) {
@@ -129,152 +89,10 @@ func New() *Server {
 	return s
 }
 
-func (s *Server) getLimiter(ip string) *rate.Limiter {
-	s.limitersMu.RLock()
-	lt, exists := s.limiters[ip]
-	s.limitersMu.RUnlock()
-
-	if !exists {
-		lt = &limiterWithTime{
-			limiter:    rate.NewLimiter(rate.Every(time.Second), 5), // 5 requests per second
-			lastAccess: time.Now(),
-		}
-		s.limitersMu.Lock()
-		s.limiters[ip] = lt
-		s.limitersMu.Unlock()
-		return lt.limiter
-	}
-
-	lt.lastAccess = time.Now()
-	return lt.limiter
-}
-
-func (s *Server) cleanupLimiters() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			s.limitersMu.Lock()
-			for ip, lt := range s.limiters {
-				if time.Since(lt.lastAccess) > 30*time.Minute {
-					delete(s.limiters, ip)
-				}
-			}
-			s.limitersMu.Unlock()
-		}
-	}
-}
-
-func (s *Server) isBanned(ip string) bool {
-	s.bannedMu.RLock()
-	banTime, banned := s.banned[ip]
-	s.bannedMu.RUnlock()
-
-	if !banned {
-		return false
-	}
-
-	if time.Since(banTime) > 1*time.Hour {
-		s.bannedMu.Lock()
-		delete(s.banned, ip)
-		s.bannedMu.Unlock()
-		return false
-	}
-
-	return true
-}
-
-func (s *Server) recordFailure(ip string) {
-	s.failuresMu.Lock()
-	defer s.failuresMu.Unlock()
-
-	record, exists := s.failures[ip]
-	now := time.Now()
-
-	if !exists {
-		s.failures[ip] = &failureRecord{
-			count:     1,
-			firstFail: now,
-			lastFail:  now,
-		}
-		return
-	}
-
-	// Reset count if last failure was more than 5 minutes ago
-	if time.Since(record.lastFail) > 5*time.Minute {
-		record.count = 0
-		record.firstFail = now
-	}
-
-	record.count++
-	record.lastFail = now
-
-	// Ban IP if more than 50 failures in 5 minutes
-	if record.count > 50 && time.Since(record.firstFail) <= 5*time.Minute {
-		s.bannedMu.Lock()
-		s.banned[ip] = now
-		s.bannedMu.Unlock()
-		log.Warn("IP banned due to excessive failures", "ip", ip, "failures", record.count)
-		delete(s.failures, ip)
-	}
-}
-
-func (s *Server) cleanupFailuresAndBans() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			now := time.Now()
-
-			// Cleanup old failure records
-			s.failuresMu.Lock()
-			for ip, record := range s.failures {
-				if time.Since(record.lastFail) > 30*time.Minute {
-					delete(s.failures, ip)
-				}
-			}
-			s.failuresMu.Unlock()
-
-			// Cleanup expired bans
-			s.bannedMu.Lock()
-			for ip, banTime := range s.banned {
-				if now.Sub(banTime) > 1*time.Hour {
-					delete(s.banned, ip)
-					log.Info("Ban expired", "ip", ip)
-				}
-			}
-			s.bannedMu.Unlock()
-		}
-	}
-}
-
 func (s *Server) Stop() {
-	if s.c != nil {
-		s.c()
+	if s.cancel != nil {
+		s.cancel()
 	}
-}
-
-func (s *Server) trackConnection(remoteAddr string) bool {
-	if atomic.LoadInt32(&s.connCount) >= s.maxConns {
-		return false
-	}
-
-	atomic.AddInt32(&s.connCount, 1)
-	s.activeConns.Store(remoteAddr, time.Now())
-	return true
-}
-
-func (s *Server) removeConnection(remoteAddr string) {
-	s.activeConns.Delete(remoteAddr)
-	atomic.AddInt32(&s.connCount, -1)
 }
 
 func (s *Server) Start() error {
@@ -289,23 +107,6 @@ func (s *Server) Start() error {
 		Addr: ":443",
 		TLSConfig: &tls.Config{
 			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-				// Extract client IP from hello.Conn
-				tcpConn := hello.Conn.RemoteAddr().String()
-				ip := tcpConn[:strings.LastIndex(tcpConn, ":")]
-
-				// Check if IP is banned
-				if s.isBanned(ip) {
-					log.Debug("Rejected banned IP", "ip", ip)
-					return nil, fmt.Errorf("ip is banned")
-				}
-
-				// Apply rate limiting
-				if !s.getLimiter(ip).Allow() {
-					log.Warn("Rate limit exceeded for TLS handshake", "ip", ip)
-					s.recordFailure(ip)
-					return nil, fmt.Errorf("rate limit exceeded")
-				}
-
 				return &tls.Config{
 					GetCertificate: s.certm.GetCertificate,
 					MinVersion:     tls.VersionTLS12, // 强制使用 TLS 1.2 或更高版本

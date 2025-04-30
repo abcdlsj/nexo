@@ -25,14 +25,6 @@ func (s *Server) handleHTTPS() http.Handler {
 		// 限制请求体大小为 10MB
 		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 
-		// 检查并发连接限制
-		remoteAddr := r.RemoteAddr
-		if !s.trackConnection(remoteAddr) {
-			http.Error(w, "Too many connections", http.StatusServiceUnavailable)
-			return
-		}
-		defer s.removeConnection(remoteAddr)
-
 		host := strings.ToLower(r.Host)
 		if strings.Contains(host, ":") {
 			var err error
