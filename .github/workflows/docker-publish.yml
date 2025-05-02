@@ -2,7 +2,7 @@ name: Docker Build and Publish
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 jobs:
   build-and-push:
@@ -20,12 +20,24 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Generate Docker tags
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          # For main branch
+          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          type=sha,enable=${{ github.ref == 'refs/heads/main' }}
+          # For dev branch
+          type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+          type=sha,prefix=dev-,enable=${{ github.ref == 'refs/heads/dev' }}
+
     - name: Build and push
       uses: docker/build-push-action@v2
       with:
         context: .
         push: true
-        tags: |
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ github.sha }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
 
