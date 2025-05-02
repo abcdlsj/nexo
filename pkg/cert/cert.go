@@ -2,6 +2,9 @@ package cert
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"os"
@@ -80,9 +83,15 @@ func (m *Manager) ObtainCert(domain string) error {
 }
 
 func (m *Manager) createClient() (*lego.Client, error) {
+	// Generate private key for user
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate private key: %v", err)
+	}
+
 	user := &User{
 		Email: m.config.Email,
-		key:   certcrypto.RSA2048,
+		key:   privateKey,
 	}
 
 	config := lego.NewConfig(user)
@@ -109,6 +118,13 @@ func (m *Manager) createClient() (*lego.Client, error) {
 		dns01.DisableCompletePropagationRequirement()); err != nil {
 		return nil, err
 	}
+
+	// Register user if necessary
+	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register user: %v", err)
+	}
+	user.Registration = reg
 
 	return client, nil
 }
@@ -158,7 +174,7 @@ func (m *Manager) LoadCertificate(domain string) error {
 type User struct {
 	Email        string
 	Registration *registration.Resource
-	key          certcrypto.KeyType
+	key          crypto.PrivateKey
 }
 
 func (u *User) GetEmail() string {

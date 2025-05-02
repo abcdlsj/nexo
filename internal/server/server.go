@@ -231,12 +231,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 		return fmt.Errorf("upstream not accessible for %s: %v", domain, err)
 	}
 
-	certDomain := s.getCertDomain(domain)
-	if certDomain == "" {
-		return fmt.Errorf("invalid domain: %s", domain)
-	}
-
-	if err := s.ensureCertificate(domain, certDomain); err != nil {
+	if err := s.handleCertObtain(domain, false); err != nil {
 		return err
 	}
 
@@ -263,15 +258,44 @@ func (s *Server) getCertDomain(domain string) string {
 	return domain
 }
 
-func (s *Server) ensureCertificate(domain, certDomain string) error {
-	if _, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err != nil {
-		log.Info("Certificate not found, obtaining new certificate", "domain", domain)
-		if err := s.certm.ObtainCert(certDomain); err != nil {
-			s.addFailedCert(domain, err)
-			return fmt.Errorf("error obtaining certificate for %s: %v", domain, err)
-		}
-		log.Info("Successfully obtained certificate", "domain", domain)
+// handleCertObtain handles certificate obtaining with proper error handling and logging
+func (s *Server) handleCertObtain(domain string, isRetry bool) error {
+	certDomain := s.getCertDomain(domain)
+	if certDomain == "" {
+		log.Error("Invalid domain for certificate", "domain", domain, "operation", map[bool]string{true: "retry", false: "ensure"}[isRetry])
+		return fmt.Errorf("invalid domain: %s", domain)
 	}
+
+	// First check if we already have a valid certificate
+	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: certDomain})
+	if err == nil && cert != nil && !needsRenewal(cert) {
+		if isRetry {
+			// If this is a retry and we have a valid cert, remove it from failed certs
+			delete(s.failCerts, domain)
+			log.Info("Found valid certificate during retry", "domain", certDomain)
+		}
+		return nil
+	}
+
+	// Need to obtain a new certificate
+	if err := s.certm.ObtainCert(certDomain); err != nil {
+		if isRetry {
+			s.failCerts[domain] = time.Now()
+			log.Error("Failed to obtain certificate (retry)", "domain", certDomain, "err", err)
+		} else {
+			s.addFailedCert(domain, err)
+			log.Error("Failed to obtain certificate", "domain", certDomain, "err", err)
+		}
+		return err
+	}
+
+	if isRetry {
+		delete(s.failCerts, domain)
+		log.Info("Successfully obtained certificate (retry)", "domain", certDomain)
+	} else {
+		log.Info("Successfully obtained certificate", "domain", certDomain)
+	}
+
 	return nil
 }
 
@@ -292,25 +316,7 @@ func (s *Server) renewCerts() {
 			s.mu.RUnlock()
 
 			for _, domain := range domains {
-				certDomain := s.getCertDomain(domain)
-				if certDomain == "" {
-					log.Error("Invalid domain for certificate renewal", "domain", domain)
-					continue
-				}
-
-				cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: certDomain})
-				if err != nil {
-					log.Error("Failed to get certificate", "domain", certDomain, "err", err)
-					continue
-				}
-
-				if cert == nil || needsRenewal(cert) {
-					if err := s.certm.ObtainCert(certDomain); err != nil {
-						log.Error("Failed to renew certificate", "domain", certDomain, "err", err)
-					} else {
-						log.Info("Successfully renewed certificate", "domain", certDomain)
-					}
-				}
+				s.handleCertObtain(domain, false)
 			}
 		}
 	}
@@ -352,19 +358,7 @@ func (s *Server) checkFailedCerts() {
 
 	for domain, lastTry := range s.failCerts {
 		if time.Since(lastTry) > certRetryDelay {
-			certDomain := s.getCertDomain(domain)
-			if certDomain == "" {
-				log.Error("Invalid domain for certificate retry", "domain", domain)
-				continue
-			}
-
-			if err := s.certm.ObtainCert(certDomain); err != nil {
-				s.failCerts[domain] = time.Now()
-				log.Error("Failed to obtain certificate (retry)", "domain", certDomain, "err", err)
-			} else {
-				delete(s.failCerts, domain)
-				log.Info("Successfully obtained certificate (retry)", "domain", certDomain)
-			}
+			s.handleCertObtain(domain, true)
 		}
 	}
 }
