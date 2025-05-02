@@ -17,6 +17,24 @@ import (
 	"github.com/charmbracelet/log"
 )
 
+const (
+	// Server timeouts
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+	readHeaderTimeout = 10 * time.Second
+
+	// Certificate management
+	certRetryInterval = 1 * time.Hour
+	certRenewInterval = 24 * time.Hour
+	certRetryDelay    = 24 * time.Hour
+
+	// Request limits
+	maxRequestSize    = 10 << 20 // 10MB
+	maxHeaderSize     = 1 << 20  // 1MB
+	keepAliveDuration = 3 * time.Minute
+)
+
 // Server represents the HTTPS proxy server
 type Server struct {
 	ctx    context.Context
@@ -62,38 +80,48 @@ func New(cfg *config.Config) *Server {
 
 // Start starts the HTTPS server
 func (s *Server) Start() error {
-	// Load proxy configurations
 	if err := s.loadProxies(); err != nil {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
 
-	// Start HTTPS server
 	server := &http.Server{
-		Addr: ":443",
-		TLSConfig: &tls.Config{
-			GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-				return &tls.Config{
-					GetCertificate: s.certm.GetCertificate,
-					MinVersion:     tls.VersionTLS12,
-				}, nil
-			},
-		},
+		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		ReadHeaderTimeout: 10 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		MaxHeaderBytes:    maxHeaderSize,
+		TLSConfig:         s.createTLSConfig(),
 	}
 
-	// Enable TCP keep-alive
-	ln, err := net.Listen("tcp", server.Addr)
+	ln, err := s.createListener()
 	if err != nil {
 		return err
 	}
 
-	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, server.TLSConfig)
-	return server.Serve(tlsListener)
+	return server.Serve(ln)
+}
+
+func (s *Server) createTLSConfig() *tls.Config {
+	return &tls.Config{
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			return &tls.Config{
+				GetCertificate: s.certm.GetCertificate,
+				MinVersion:     tls.VersionTLS12,
+			}, nil
+		},
+	}
+}
+
+func (s *Server) createListener() (net.Listener, error) {
+	ln, err := net.Listen("tcp", ":443")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create listener: %v", err)
+	}
+
+	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, s.createTLSConfig())
+	return tlsListener, nil
 }
 
 // Stop stops the server
@@ -105,35 +133,16 @@ func (s *Server) Stop() {
 
 func (s *Server) handleHTTPS() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Limit request body size to 10MB
-		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 
-		host := strings.ToLower(r.Host)
-		if strings.Contains(host, ":") {
-			var err error
-			host, _, err = net.SplitHostPort(host)
-			if err != nil {
-				http.Error(w, "Invalid host", http.StatusBadRequest)
-				return
-			}
+		host := s.extractHost(r)
+		if host == "" {
+			http.Error(w, "Invalid host", http.StatusBadRequest)
+			return
 		}
 
-		s.mu.RLock()
-		handler, ok := s.proxies[host]
-		s.mu.RUnlock()
-
-		if !ok {
-			// Try wildcard domain
-			parts := strings.SplitN(host, ".", 2)
-			if len(parts) == 2 {
-				wildcardDomain := "*." + parts[1]
-				s.mu.RLock()
-				handler, ok = s.proxies[wildcardDomain]
-				s.mu.RUnlock()
-			}
-		}
-
-		if !ok {
+		handler := s.findHandler(host)
+		if handler == nil {
 			http.Error(w, "Domain not configured", http.StatusNotFound)
 			return
 		}
@@ -142,38 +151,44 @@ func (s *Server) handleHTTPS() http.Handler {
 	})
 }
 
+func (s *Server) extractHost(r *http.Request) string {
+	host := strings.ToLower(r.Host)
+	if !strings.Contains(host, ":") {
+		return host
+	}
+
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
+func (s *Server) findHandler(host string) *proxy.Handler {
+	s.mu.RLock()
+	handler, ok := s.proxies[host]
+	s.mu.RUnlock()
+
+	if !ok {
+		parts := strings.SplitN(host, ".", 2)
+		if len(parts) == 2 {
+			wildcardDomain := "*." + parts[1]
+			s.mu.RLock()
+			handler, ok = s.proxies[wildcardDomain]
+			s.mu.RUnlock()
+		}
+	}
+
+	return handler
+}
+
 func (s *Server) loadProxies() error {
 	newProxies := make(map[string]*proxy.Handler)
 
 	for domain, cfg := range s.cfg.Proxies {
-		target, err := url.Parse(cfg.Target)
-		if err != nil {
-			return fmt.Errorf("error parsing target URL for %s: %v", domain, err)
+		if err := s.setupProxy(domain, cfg, newProxies); err != nil {
+			return err
 		}
-
-		if err := proxy.CheckTarget(target); err != nil {
-			return fmt.Errorf("target not accessible for %s: %v", domain, err)
-		}
-
-		certDomain := domain
-		if cfg.UseWildcardCert {
-			certDomain = getWildcardDomain(domain)
-			if certDomain == "" {
-				return fmt.Errorf("invalid domain for wildcard cert: %s", domain)
-			}
-		}
-
-		// Try to get existing certificate
-		if _, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err != nil {
-			log.Info("Certificate not found, obtaining new certificate", "domain", domain)
-			if err := s.certm.ObtainCert(certDomain); err != nil {
-				s.addFailedCert(domain, err)
-				return fmt.Errorf("error obtaining certificate for %s: %v", domain, err)
-			}
-			log.Info("Successfully obtained certificate", "domain", domain)
-		}
-
-		newProxies[domain] = proxy.New(target, domain)
 	}
 
 	s.mu.Lock()
@@ -183,8 +198,50 @@ func (s *Server) loadProxies() error {
 	return nil
 }
 
+func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string]*proxy.Handler) error {
+	target, err := url.Parse(cfg.Target)
+	if err != nil {
+		return fmt.Errorf("error parsing target URL for %s: %v", domain, err)
+	}
+
+	if err := proxy.CheckTarget(target); err != nil {
+		return fmt.Errorf("target not accessible for %s: %v", domain, err)
+	}
+
+	certDomain := s.getCertDomain(domain, cfg)
+	if certDomain == "" {
+		return fmt.Errorf("invalid domain for wildcard cert: %s", domain)
+	}
+
+	if err := s.ensureCertificate(domain, certDomain); err != nil {
+		return err
+	}
+
+	proxies[domain] = proxy.New(target, domain)
+	return nil
+}
+
+func (s *Server) getCertDomain(domain string, cfg *proxy.Config) string {
+	if !cfg.UseWildcardCert {
+		return domain
+	}
+	return getWildcardDomain(domain)
+}
+
+func (s *Server) ensureCertificate(domain, certDomain string) error {
+	if _, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain}); err != nil {
+		log.Info("Certificate not found, obtaining new certificate", "domain", domain)
+		if err := s.certm.ObtainCert(certDomain); err != nil {
+			s.addFailedCert(domain, err)
+			return fmt.Errorf("error obtaining certificate for %s: %v", domain, err)
+		}
+		log.Info("Successfully obtained certificate", "domain", domain)
+	}
+	return nil
+}
+
 func (s *Server) renewCerts() {
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(certRenewInterval)
 	defer ticker.Stop()
 
 	for {
@@ -209,7 +266,7 @@ func (s *Server) renewCerts() {
 }
 
 func (s *Server) retryCerts() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(certRetryInterval)
 	defer ticker.Stop()
 
 	for {
@@ -234,7 +291,7 @@ func (s *Server) checkFailedCerts() {
 	defer s.failCertsMu.Unlock()
 
 	for domain, lastTry := range s.failCerts {
-		if time.Since(lastTry) > 24*time.Hour {
+		if time.Since(lastTry) > certRetryDelay {
 			if err := s.certm.ObtainCert(domain); err != nil {
 				s.failCerts[domain] = time.Now()
 				log.Error("Failed to obtain certificate (retry)", "domain", domain, "err", err)
@@ -256,7 +313,7 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(3 * time.Minute)
+	tc.SetKeepAlivePeriod(keepAliveDuration)
 	return tc, nil
 }
 
