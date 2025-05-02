@@ -33,6 +33,9 @@ const (
 	maxRequestSize    = 10 << 20 // 10MB
 	maxHeaderSize     = 1 << 20  // 1MB
 	keepAliveDuration = 3 * time.Minute
+
+	// Certificate renewal threshold
+	renewalThreshold = 30 * 24 * time.Hour
 )
 
 // Server represents the HTTPS proxy server
@@ -269,12 +272,37 @@ func (s *Server) renewCerts() {
 			s.mu.RUnlock()
 
 			for _, domain := range domains {
-				if err := s.certm.ObtainCert(domain); err != nil {
-					log.Error("Failed to renew certificate", "domain", domain, "err", err)
+				certDomain := s.getCertDomain(domain)
+				if certDomain == "" {
+					log.Error("Invalid domain for certificate renewal", "domain", domain)
+					continue
+				}
+
+				cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: certDomain})
+				if err != nil {
+					log.Error("Failed to get certificate", "domain", certDomain, "err", err)
+					continue
+				}
+
+				if cert == nil || needsRenewal(cert) {
+					if err := s.certm.ObtainCert(certDomain); err != nil {
+						log.Error("Failed to renew certificate", "domain", certDomain, "err", err)
+					} else {
+						log.Info("Successfully renewed certificate", "domain", certDomain)
+					}
 				}
 			}
 		}
 	}
+}
+
+func needsRenewal(cert *tls.Certificate) bool {
+	leaf := cert.Leaf
+	if leaf == nil {
+		return true
+	}
+
+	return time.Until(leaf.NotAfter) < renewalThreshold
 }
 
 func (s *Server) retryCerts() {
@@ -304,12 +332,18 @@ func (s *Server) checkFailedCerts() {
 
 	for domain, lastTry := range s.failCerts {
 		if time.Since(lastTry) > certRetryDelay {
-			if err := s.certm.ObtainCert(domain); err != nil {
+			certDomain := s.getCertDomain(domain)
+			if certDomain == "" {
+				log.Error("Invalid domain for certificate retry", "domain", domain)
+				continue
+			}
+
+			if err := s.certm.ObtainCert(certDomain); err != nil {
 				s.failCerts[domain] = time.Now()
-				log.Error("Failed to obtain certificate (retry)", "domain", domain, "err", err)
+				log.Error("Failed to obtain certificate (retry)", "domain", certDomain, "err", err)
 			} else {
 				delete(s.failCerts, domain)
-				log.Info("Successfully obtained certificate (retry)", "domain", domain)
+				log.Info("Successfully obtained certificate (retry)", "domain", certDomain)
 			}
 		}
 	}
