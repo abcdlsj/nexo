@@ -1,8 +1,39 @@
+# Nexo 配置文件示例
+
+# 基础配置
+base_dir: /etc/nexo          # 默认配置目录
+cert_dir: /etc/nexo/certs    # 默认证书目录
 email: your-email@example.com
 cloudflare:
-  api_token: "your-cloudflare-api-token"  # 从Cloudflare获取的API Token
+  api_token: your-cloudflare-api-token    # 从 Cloudflare 获取的 API Token
+
+# 通配符域名证书配置
+domains:
+  - example.com                # 将为 *.example.com 申请通配符证书
+  - yourdomain.com             # 将为 *.yourdomain.com 申请通配符证书
+
+# 代理配置
 proxies:
-  "example.com":
-    target: "http://localhost:8080"
-  "*.example.com":
-    target: "http://localhost:3000"
+  # blog 服务
+  blog.example.com:
+    upstream: http://localhost:3000
+
+  # API 服务
+  api.example.com:
+    upstream: http://localhost:8080
+
+  # 主站
+  www.example.com:
+    upstream: http://localhost:8000
+
+  # 开发环境
+  dev.yourdomain.com:
+    upstream: http://localhost:3001
+
+  # 测试环境
+  test.yourdomain.com:
+    upstream: http://localhost:3002
+
+  # 特定域名（在 domains 里查不到，会单独申请证书）
+  specific.otherdomain.com:
+    upstream: http://localhost:5000
