@@ -1,14 +1,14 @@
 # Nexo
 
-A simple HTTPS reverse proxy tool with automatic certificate management using Cloudflare DNS challenge.
+A simple HTTPS reverse proxy with automatic certificate management using Cloudflare DNS challenge.
 
 ## Features
 
 - Automatic HTTPS certificate management using Let's Encrypt
 - Cloudflare DNS challenge for certificate validation (no need for port 80)
-- Support wildcard certificates
-- Dynamic configuration through YAML file
-- Automatic certificate renewal
+- Smart wildcard certificate management
+- Automatic certificate renewal (30 days before expiration)
+- Dynamic configuration through YAML
 - Docker support
 
 ## Prerequisites
@@ -50,55 +50,59 @@ go install github.com/abcdlsj/nexo@latest
 Create or edit `/etc/nexo/config.yaml` (or `~/.nexo/config.yaml` for non-root users):
 
 ```yaml
+# Basic settings
+base_dir: /etc/nexo          # Default config directory
+cert_dir: /etc/nexo/certs    # Default certificate directory
 email: your-email@example.com
 cloudflare:
-  api_token: "your-cloudflare-api-token"  # Required for DNS challenge
+  api_token: your-cloudflare-api-token    # Required for DNS challenge
+
+# Wildcard certificate domains
+domains:
+  - example.com                # Will obtain *.example.com certificate
+  - yourdomain.com            # Will obtain *.yourdomain.com certificate
+
+# Proxy configurations
 proxies:
-  "example.com":
-    target: "http://localhost:8080"
-  "api.example.com":
-    target: "http://localhost:3000"
-  "*.test.example.com":
-    target: "http://localhost:8888"
+  # Using wildcard certificate from example.com
+  blog.example.com:
+    upstream: http://localhost:3000
+  api.example.com:
+    upstream: http://localhost:8080
+
+  # Using wildcard certificate from yourdomain.com
+  dev.yourdomain.com:
+    upstream: http://localhost:3001
+
+  # Will obtain a separate certificate
+  specific.otherdomain.com:
+    upstream: http://localhost:5000
 ```
 
-The configuration file is watched for changes and will be automatically reloaded when modified.
+### Configuration Explanation
+
+1. **Basic Settings**
+   - `base_dir`: Directory for configuration files
+   - `cert_dir`: Directory for storing certificates
+   - `email`: Your email for Let's Encrypt
+   - `cloudflare.api_token`: Your Cloudflare API token
+
+2. **Certificate Management**
+   - List domains in `domains` section to use wildcard certificates
+   - Domains not listed will get individual certificates
+   - Certificates are automatically renewed 30 days before expiration
+
+3. **Proxy Settings**
+   - Each entry under `proxies` maps a domain to an upstream server
+   - Wildcard certificates are automatically used for matching domains
+   - Other domains get individual certificates
 
 ## Usage
 
-1. Start the server (requires root privileges for port 443):
+Start the server (requires root privileges for port 443):
 ```bash
 sudo nexo server
 ```
-
-## Example Setup
-
-Let's say you have:
-- A React app running on port 3000
-- An API server running on port 8080
-
-1. Ensure your domains are configured in Cloudflare and pointing to your server's IP
-
-2. Configure in `/etc/nexo/config.yaml`:
-```yaml
-email: your-email@example.com
-cloudflare:
-  api_token: "your-cloudflare-api-token"
-proxies:
-  "app.example.com":
-    target: "http://localhost:3000"
-  "api.example.com":
-    target: "http://localhost:8080"
-```
-
-3. Start the server:
-```bash
-sudo nexo server
-```
-
-Now you can access:
-- https://app.example.com -> proxied to localhost:3000
-- https://api.example.com -> proxied to localhost:8080
 
 ## Notes
 
@@ -111,10 +115,9 @@ Now you can access:
 
 1. Verify domain DNS settings in Cloudflare
 2. Check Cloudflare API Token permissions
-3. Ensure target services are running
+3. Ensure upstream services are running
 4. Check server logs for errors
-5. Verify Cloudflare API Token is correctly configured
-6. Check the configuration file permissions
+5. Verify configuration file syntax and permissions
 
 ## License
 
