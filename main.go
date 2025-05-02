@@ -9,6 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	defaultConfigPath = "/etc/nexo/config.yaml"
+)
+
 var (
 	cfgFile string
 	rootCmd = &cobra.Command{
@@ -17,12 +21,16 @@ var (
 		Long: `Nexo is a simple HTTPS reverse proxy tool with automatic certificate management.
 It supports wildcard certificates and configuration through YAML files.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cfgFile == "" {
+				cfgFile = defaultConfigPath
+			}
+
 			cfg, err := config.Load(cfgFile)
 			if err != nil {
 				return err
 			}
 
-			srv := server.New(cfg)
+			srv := server.New(cfg, cfgFile)
 			return srv.Start()
 		},
 	}

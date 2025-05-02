@@ -43,7 +43,7 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("email", "admin@example.com")
 	v.SetDefault("cloudflare:api_token", "")
 	v.SetDefault("domains", []string{})
-	v.SetDefault("proxies", map[string]interface{}{})
+	v.SetDefault("proxies", map[string]any{})
 
 	// Determine config directory
 	configDir := "/etc/nexo"

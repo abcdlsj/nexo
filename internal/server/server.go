@@ -15,6 +15,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
+	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -51,10 +52,14 @@ type Server struct {
 	failCertsMu sync.RWMutex
 
 	mu sync.RWMutex
+
+	// Configuration watcher
+	watcher    *fsnotify.Watcher
+	configPath string
 }
 
 // New creates a new server instance
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config, configPath string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	certCfg := cert.Config{
@@ -64,12 +69,13 @@ func New(cfg *config.Config) *Server {
 	}
 
 	s := &Server{
-		ctx:       ctx,
-		cancel:    cancel,
-		cfg:       cfg,
-		certm:     cert.New(certCfg),
-		proxies:   make(map[string]*proxy.Handler),
-		failCerts: make(map[string]time.Time),
+		ctx:        ctx,
+		cancel:     cancel,
+		cfg:        cfg,
+		certm:      cert.New(certCfg),
+		proxies:    make(map[string]*proxy.Handler),
+		failCerts:  make(map[string]time.Time),
+		configPath: configPath,
 	}
 
 	// Start certificate renewal goroutine
@@ -83,8 +89,13 @@ func New(cfg *config.Config) *Server {
 
 // Start starts the HTTPS server
 func (s *Server) Start() error {
-	if err := s.loadProxies(); err != nil {
+	if err := s.loadProxies(false); err != nil {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
+	}
+
+	// Setup configuration file watcher
+	if err := s.setupConfigWatcher(); err != nil {
+		log.Error("Failed to setup config watcher", "err", err)
 	}
 
 	server := &http.Server{
@@ -97,6 +108,9 @@ func (s *Server) Start() error {
 		MaxHeaderBytes:    maxHeaderSize,
 		TLSConfig:         s.createTLSConfig(),
 	}
+
+	// Start admin server for manual reload
+	go s.startAdminServer()
 
 	ln, err := s.createListener()
 	if err != nil {
@@ -129,6 +143,9 @@ func (s *Server) createListener() (net.Listener, error) {
 
 // Stop stops the server
 func (s *Server) Stop() {
+	if s.watcher != nil {
+		s.watcher.Close()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -185,11 +202,14 @@ func (s *Server) findHandler(host string) *proxy.Handler {
 	return handler
 }
 
-func (s *Server) loadProxies() error {
+func (s *Server) loadProxies(reload bool) error {
 	newProxies := make(map[string]*proxy.Handler)
 
 	for domain, cfg := range s.cfg.Proxies {
 		if err := s.setupProxy(domain, cfg, newProxies); err != nil {
+			if !reload {
+				continue
+			}
 			return err
 		}
 	}
@@ -323,7 +343,7 @@ func (s *Server) addFailedCert(domain string, err error) {
 	s.failCertsMu.Lock()
 	s.failCerts[domain] = time.Now()
 	s.failCertsMu.Unlock()
-	log.Error("Failed to obtain certificate", "domain", domain, "err", err)
+	log.Error("Add to failed retry certs", "domain", domain, "err", err)
 }
 
 func (s *Server) checkFailedCerts() {
@@ -361,4 +381,85 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 	tc.SetKeepAlive(true)
 	tc.SetKeepAlivePeriod(keepAliveDuration)
 	return tc, nil
+}
+
+// setupConfigWatcher sets up fsnotify watcher for configuration file changes
+func (s *Server) setupConfigWatcher() error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create watcher: %v", err)
+	}
+
+	s.watcher = watcher
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					log.Info("Config file modified, reloading configuration")
+					if err := s.Reload(); err != nil {
+						log.Error("Failed to reload configuration", "err", err)
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Error("Config watcher error", "err", err)
+			case <-s.ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Watch the config file
+	if s.configPath != "" {
+		return watcher.Add(s.configPath)
+	}
+
+	return nil
+}
+
+// Reload reloads the configuration and updates the proxies
+func (s *Server) Reload() error {
+	// Reload configuration file
+	newCfg, err := config.Load(s.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %v", err)
+	}
+
+	s.cfg = newCfg
+	return s.loadProxies(true)
+}
+
+// startAdminServer starts a simple HTTP server for administrative tasks
+func (s *Server) startAdminServer() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := s.Reload(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "Configuration reloaded successfully")
+	})
+
+	adminServer := &http.Server{
+		Addr:    ":8080", // Admin port
+		Handler: mux,
+	}
+
+	if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Error("Admin server error", "err", err)
+	}
 }
