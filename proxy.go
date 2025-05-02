@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,6 +88,38 @@ func (s *Server) createReverseProxy(targetURL *url.URL, domain string) *httputil
 				}
 			}
 		}
+
+		// Add cache control headers based on content type
+		contentType := resp.Header.Get("Content-Type")
+		path := resp.Request.URL.Path
+		ext := strings.ToLower(filepath.Ext(path))
+
+		// Set cache control headers based on file type
+		switch {
+		case strings.HasPrefix(contentType, "image/"),
+			strings.HasPrefix(contentType, "video/"),
+			strings.HasPrefix(contentType, "audio/"),
+			ext == ".css",
+			ext == ".js",
+			ext == ".woff",
+			ext == ".woff2",
+			ext == ".ttf",
+			ext == ".eot":
+			// Cache static assets for 7 days
+			resp.Header.Set("Cache-Control", "public, max-age=604800, stale-while-revalidate=86400")
+			resp.Header.Set("Vary", "Accept-Encoding")
+		case strings.HasPrefix(contentType, "text/html"),
+			strings.HasPrefix(contentType, "application/json"):
+			// No cache for HTML and JSON responses
+			resp.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			resp.Header.Set("Pragma", "no-cache")
+			resp.Header.Set("Expires", "0")
+		default:
+			// Default cache for 1 hour
+			resp.Header.Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=600")
+			resp.Header.Set("Vary", "Accept-Encoding")
+		}
+
 		return nil
 	}
 
