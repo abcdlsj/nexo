@@ -199,18 +199,18 @@ func (s *Server) loadProxies() error {
 }
 
 func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string]*proxy.Handler) error {
-	target, err := url.Parse(cfg.Target)
+	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
-		return fmt.Errorf("error parsing target URL for %s: %v", domain, err)
+		return fmt.Errorf("error parsing upstream URL for %s: %v", domain, err)
 	}
 
 	if err := proxy.CheckTarget(target); err != nil {
-		return fmt.Errorf("target not accessible for %s: %v", domain, err)
+		return fmt.Errorf("upstream not accessible for %s: %v", domain, err)
 	}
 
-	certDomain := s.getCertDomain(domain, cfg)
+	certDomain := s.getCertDomain(domain)
 	if certDomain == "" {
-		return fmt.Errorf("invalid domain for wildcard cert: %s", domain)
+		return fmt.Errorf("invalid domain: %s", domain)
 	}
 
 	if err := s.ensureCertificate(domain, certDomain); err != nil {
@@ -221,11 +221,23 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 	return nil
 }
 
-func (s *Server) getCertDomain(domain string, cfg *proxy.Config) string {
-	if !cfg.UseWildcardCert {
-		return domain
+func (s *Server) getCertDomain(domain string) string {
+	// Extract the root domain
+	parts := strings.Split(domain, ".")
+	if len(parts) < 2 {
+		return ""
 	}
-	return getWildcardDomain(domain)
+	rootDomain := strings.Join(parts[len(parts)-2:], ".")
+
+	// Check if the root domain is in the domains list
+	for _, d := range s.cfg.Domains {
+		if d == rootDomain {
+			return "*." + rootDomain
+		}
+	}
+
+	// If root domain is not in domains list, use the specific domain
+	return domain
 }
 
 func (s *Server) ensureCertificate(domain, certDomain string) error {
@@ -315,12 +327,4 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 	tc.SetKeepAlive(true)
 	tc.SetKeepAlivePeriod(keepAliveDuration)
 	return tc, nil
-}
-
-func getWildcardDomain(domain string) string {
-	parts := strings.SplitN(domain, ".", 2)
-	if len(parts) != 2 || !strings.HasPrefix(domain, "*.") {
-		return ""
-	}
-	return domain
 }

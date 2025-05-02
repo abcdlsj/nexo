@@ -13,6 +13,7 @@ import (
 type Config struct {
 	Email      string                   `mapstructure:"email"`
 	Cloudflare CloudflareConfig         `mapstructure:"cloudflare"`
+	Domains    []string                 `mapstructure:"domains"`
 	Proxies    map[string]*proxy.Config `mapstructure:"proxies"`
 	BaseDir    string                   `mapstructure:"base_dir"`
 	CertDir    string                   `mapstructure:"cert_dir"`
@@ -41,6 +42,7 @@ func Load(cfgFile string) (*Config, error) {
 	// Set default values
 	v.SetDefault("email", "admin@example.com")
 	v.SetDefault("cloudflare:api_token", "")
+	v.SetDefault("domains", []string{})
 	v.SetDefault("proxies", map[string]interface{}{})
 
 	// Determine config directory

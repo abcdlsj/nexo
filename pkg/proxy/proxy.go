@@ -25,8 +25,7 @@ const (
 
 // Config represents the configuration for a proxy
 type Config struct {
-	Target          string
-	UseWildcardCert bool
+	Upstream string `mapstructure:"upstream"`
 }
 
 // Handler represents a proxy handler
