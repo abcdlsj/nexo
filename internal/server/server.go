@@ -264,7 +264,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 		return fmt.Errorf("either upstream or redirect must be configured for domain %s", domain)
 	}
 
-	target := orStr(cfg.Redirect, cfg.Upstream)
+	target := proxy.EnsureSchema(orStr(cfg.Redirect, cfg.Upstream))
 
 	u, err := url.Parse(target)
 	if err != nil {

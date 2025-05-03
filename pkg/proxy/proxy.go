@@ -62,14 +62,18 @@ func New(cfg *Config, host string) *Handler {
 	}
 }
 
+// EnsureSchema ensures the URL has a valid scheme (http:// or https://)
+func EnsureSchema(target string) string {
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		return "https://" + target
+	}
+	return target
+}
+
 // ServeHTTP implements the http.Handler interface
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.redirect != "" {
-		target := h.redirect
-		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-			target = "https://" + target
-		}
-		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		http.Redirect(w, r, EnsureSchema(h.redirect), http.StatusTemporaryRedirect)
 		return
 	}
 	h.proxy.ServeHTTP(w, r)
