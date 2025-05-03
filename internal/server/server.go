@@ -109,9 +109,6 @@ func (s *Server) Start() error {
 		TLSConfig:         s.createTLSConfig(),
 	}
 
-	// Start admin server for manual reload
-	go s.startAdminServer()
-
 	ln, err := s.createListener()
 	if err != nil {
 		return err
@@ -443,32 +440,4 @@ func (s *Server) Reload() error {
 
 	s.cfg = newCfg
 	return s.loadProxies(true)
-}
-
-// startAdminServer starts a simple HTTP server for administrative tasks
-func (s *Server) startAdminServer() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		if err := s.Reload(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "Configuration reloaded successfully")
-	})
-
-	adminServer := &http.Server{
-		Addr:    ":8080", // Admin port
-		Handler: mux,
-	}
-
-	if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("Admin server error", "err", err)
-	}
 }
