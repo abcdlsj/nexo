@@ -120,36 +120,52 @@ func (s *Server) Start() error {
 	return server.Serve(ln)
 }
 
-func (s *Server) createTLSConfig() *tls.Config {
-	return &tls.Config{
-		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-			return &tls.Config{
-				GetCertificate: s.getCertificate,
-				MinVersion:     tls.VersionTLS12,
-			}, nil
-		},
+// getWildcardDomain returns the wildcard domain if the domain is eligible
+func (s *Server) getWildcardDomain(domain string) (string, bool) {
+	parts := strings.SplitN(domain, ".", 2)
+	if len(parts) != 2 {
+		return "", false
 	}
+
+	rootDomain := parts[1]
+	// Check if root domain is in the configured domains list
+	for _, d := range s.cfg.Domains {
+		if d == rootDomain {
+			return "*." + rootDomain, true
+		}
+	}
+	return "", false
 }
 
-// getCertificate is a wrapper around cert.Manager's GetCertificate that adds wildcard certificate support
-func (s *Server) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	// First try exact domain
-	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: hello.ServerName})
-	if err == nil {
-		return cert, nil
-	}
-
-	// If exact domain fails, try wildcard
-	parts := strings.SplitN(hello.ServerName, ".", 2)
-	if len(parts) == 2 {
-		wildcardDomain := "*." + parts[1]
-		cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wildcardDomain})
+func (s *Server) createTLSConfig() *tls.Config {
+	getCert := func(domain string) (*tls.Certificate, error) {
+		// Try exact domain first
+		cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 		if err == nil {
 			return cert, nil
 		}
+
+		// Try wildcard domain if available
+		if wildcardDomain, ok := s.getWildcardDomain(domain); ok {
+			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wildcardDomain})
+			if err == nil {
+				return cert, nil
+			}
+		}
+
+		return nil, fmt.Errorf("no certificate found for domain: %s", domain)
 	}
 
-	return nil, fmt.Errorf("no certificate found for domain: %s", hello.ServerName)
+	return &tls.Config{
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			return &tls.Config{
+				GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+					return getCert(hello.ServerName)
+				},
+				MinVersion: tls.VersionTLS12,
+			}, nil
+		},
+	}
 }
 
 func (s *Server) createListener() (net.Listener, error) {
@@ -211,9 +227,7 @@ func (s *Server) findHandler(host string) *proxy.Handler {
 	s.mu.RUnlock()
 
 	if !ok {
-		parts := strings.SplitN(host, ".", 2)
-		if len(parts) == 2 {
-			wildcardDomain := "*." + parts[1]
+		if wildcardDomain, ok := s.getWildcardDomain(host); ok {
 			s.mu.RLock()
 			handler, ok = s.proxies[wildcardDomain]
 			s.mu.RUnlock()
@@ -260,31 +274,11 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 	return nil
 }
 
-func (s *Server) getCertDomain(domain string) string {
-	// Extract the root domain
-	parts := strings.Split(domain, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	rootDomain := strings.Join(parts[len(parts)-2:], ".")
-
-	// Check if the root domain is in the domains list
-	for _, d := range s.cfg.Domains {
-		if d == rootDomain {
-			return "*." + rootDomain
-		}
-	}
-
-	// If root domain is not in domains list, use the specific domain
-	return domain
-}
-
 // handleCertObtain handles certificate obtaining with proper error handling and logging
 func (s *Server) handleCertObtain(domain string, isRetry bool) error {
-	certDomain := s.getCertDomain(domain)
-	if certDomain == "" {
-		log.Error("Invalid domain for certificate", "domain", domain, "operation", map[bool]string{true: "retry", false: "ensure"}[isRetry])
-		return fmt.Errorf("invalid domain: %s", domain)
+	certDomain := domain
+	if wildcardDomain, ok := s.getWildcardDomain(domain); ok {
+		certDomain = wildcardDomain
 	}
 
 	// First check if we already have a valid certificate
