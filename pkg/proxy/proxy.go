@@ -36,13 +36,13 @@ type Handler struct {
 
 // New creates a new proxy handler
 func New(target *url.URL, host string) *Handler {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Director = createDirector(proxy.Director)
-	proxy.ModifyResponse = createResponseModifier(target, host)
-	proxy.ErrorHandler = createErrorHandler(host)
+	p := httputil.NewSingleHostReverseProxy(target)
+	p.Director = createDirector(p.Director)
+	p.ModifyResponse = createResponseModifier(target, host)
+	p.ErrorHandler = createErrorHandler(host)
 
 	return &Handler{
-		proxy: proxy,
+		proxy: p,
 		host:  host,
 	}
 }
@@ -52,46 +52,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.proxy.ServeHTTP(w, r)
 }
 
-func createDirector(original func(*http.Request)) func(*http.Request) {
-	return func(req *http.Request) {
-		original(req)
-		req.Header.Set("X-Forwarded-Host", req.Host)
-		req.Header.Set("X-Forwarded-Proto", "https")
-		if _, ok := req.Header["User-Agent"]; !ok {
-			req.Header.Set("User-Agent", "")
+func createDirector(orig func(*http.Request)) func(*http.Request) {
+	return func(r *http.Request) {
+		orig(r)
+		r.Header.Set("X-Forwarded-Host", r.Host)
+		r.Header.Set("X-Forwarded-Proto", "https")
+		if _, ok := r.Header["User-Agent"]; !ok {
+			r.Header.Set("User-Agent", "")
 		}
 	}
 }
 
 func createResponseModifier(target *url.URL, domain string) func(*http.Response) error {
-	return func(resp *http.Response) error {
-		if err := handleRedirect(resp, target, domain); err != nil {
+	return func(r *http.Response) error {
+		if err := handleRedirect(r, target, domain); err != nil {
 			return err
 		}
-		setCacheHeaders(resp)
+		setCacheHeaders(r)
 		return nil
 	}
 }
 
-func handleRedirect(resp *http.Response, target *url.URL, domain string) error {
-	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+func handleRedirect(r *http.Response, target *url.URL, domain string) error {
+	if r.StatusCode < 300 || r.StatusCode > 399 {
 		return nil
 	}
 
-	location := resp.Header.Get("Location")
-	if location == "" {
+	loc := r.Header.Get("Location")
+	if loc == "" {
 		return nil
 	}
 
-	locationURL, err := url.Parse(location)
+	u, err := url.Parse(loc)
 	if err != nil {
 		return err
 	}
 
-	if locationURL.Host == target.Host {
-		locationURL.Host = domain
-		locationURL.Scheme = "https"
-		resp.Header.Set("Location", locationURL.String())
+	if u.Host == target.Host {
+		u.Host = domain
+		u.Scheme = "https"
+		r.Header.Set("Location", u.String())
 	}
 
 	return nil
@@ -104,56 +104,53 @@ func createErrorHandler(host string) func(http.ResponseWriter, *http.Request, er
 	}
 }
 
-func setCacheHeaders(resp *http.Response) {
-	contentType := resp.Header.Get("Content-Type")
-	path := resp.Request.URL.Path
-	ext := strings.ToLower(filepath.Ext(path))
+func setCacheHeaders(r *http.Response) {
+	ct := r.Header.Get("Content-Type")
+	p := r.Request.URL.Path
+	ext := strings.ToLower(filepath.Ext(p))
 
 	switch {
-	case isStaticContent(contentType, ext):
-		resp.Header.Set("Cache-Control", longTermCache)
-	case isDynamicContent(contentType):
-		resp.Header.Set("Cache-Control", noCache)
-		resp.Header.Set("Pragma", "no-cache")
-		resp.Header.Set("Expires", "0")
+	case isStaticContent(ct, ext):
+		r.Header.Set("Cache-Control", longTermCache)
+	case isDynamicContent(ct):
+		r.Header.Set("Cache-Control", noCache)
+		r.Header.Set("Pragma", "no-cache")
+		r.Header.Set("Expires", "0")
 	default:
-		resp.Header.Set("Cache-Control", shortTermCache)
+		r.Header.Set("Cache-Control", shortTermCache)
 	}
-	resp.Header.Set("Vary", "Accept-Encoding")
+	r.Header.Set("Vary", "Accept-Encoding")
 }
 
-func isStaticContent(contentType, ext string) bool {
-	// Check content type prefixes
-	for _, prefix := range strings.Split(staticPrefixes, ",") {
-		if strings.HasPrefix(contentType, prefix) {
+func isStaticContent(ct, ext string) bool {
+	for _, p := range strings.Split(staticPrefixes, ",") {
+		if strings.HasPrefix(ct, p) {
 			return true
 		}
 	}
-
-	// Check file extensions
 	return strings.Contains(staticExtensions, ext)
 }
 
-func isDynamicContent(contentType string) bool {
-	return strings.HasPrefix(contentType, "text/html") ||
-		strings.HasPrefix(contentType, "application/json")
+func isDynamicContent(ct string) bool {
+	return strings.HasPrefix(ct, "text/html") ||
+		strings.HasPrefix(ct, "application/json")
 }
 
 // CheckTarget verifies if the target URL is accessible
-func CheckTarget(targetURL *url.URL) error {
-	client := &http.Client{
+func CheckTarget(u *url.URL) error {
+	c := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	if !strings.HasPrefix(targetURL.Scheme, "http") {
-		targetURL.Scheme = "http"
+	if !strings.HasPrefix(u.Scheme, "http") {
+		u.Scheme = "http"
 	}
 
-	resp, err := client.Get(targetURL.String())
+	r, err := c.Get(u.String())
 	if err != nil {
 		return fmt.Errorf("target not accessible: %v", err)
 	}
-	defer resp.Body.Close()
+	defer r.Body.Close()
 
 	return nil
 }

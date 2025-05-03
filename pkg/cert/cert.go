@@ -46,7 +46,7 @@ func New(cfg Config) (*Manager, error) {
 	}
 
 	// Create ACME client first
-	client, err := createClient(cfg)
+	c, err := createClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ACME client: %v", err)
 	}
@@ -54,7 +54,7 @@ func New(cfg Config) (*Manager, error) {
 	m := &Manager{
 		config: cfg,
 		certs:  make(map[string]*tls.Certificate),
-		client: client,
+		client: c,
 	}
 
 	// Load existing certificates from disk
@@ -68,26 +68,26 @@ func New(cfg Config) (*Manager, error) {
 // createClient creates a new ACME client with the given configuration
 func createClient(cfg Config) (*lego.Client, error) {
 	// Generate private key for user
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate private key: %v", err)
 	}
 
-	user := &User{
+	u := &User{
 		Email: cfg.Email,
-		key:   privateKey,
+		key:   key,
 	}
 
-	config := lego.NewConfig(user)
-	config.CADirURL = lego.LEDirectoryProduction
-	config.Certificate.KeyType = certcrypto.RSA2048
+	c := lego.NewConfig(u)
+	c.CADirURL = lego.LEDirectoryProduction
+	c.Certificate.KeyType = certcrypto.RSA2048
 
-	client, err := lego.NewClient(config)
+	client, err := lego.NewClient(c)
 	if err != nil {
 		return nil, err
 	}
 
-	cfProvider, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
+	p, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
 		AuthToken:          cfg.CFAPIToken,
 		TTL:                120,
 		PropagationTimeout: 180 * time.Second,
@@ -97,7 +97,7 @@ func createClient(cfg Config) (*lego.Client, error) {
 		return nil, fmt.Errorf("failed to create cloudflare provider: %v", err)
 	}
 
-	if err := client.Challenge.SetDNS01Provider(cfProvider,
+	if err := client.Challenge.SetDNS01Provider(p,
 		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"}),
 		dns01.DisableCompletePropagationRequirement()); err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func createClient(cfg Config) (*lego.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to register user: %v", err)
 	}
-	user.Registration = reg
+	u.Registration = reg
 
 	return client, nil
 }
@@ -125,25 +125,25 @@ func (m *Manager) loadCerts() error {
 			continue
 		}
 
-		domain := strings.TrimSuffix(f.Name(), ".crt")
-		certPath := filepath.Join(m.config.CertDir, f.Name())
-		keyPath := filepath.Join(m.config.CertDir, domain+".key")
+		name := strings.TrimSuffix(f.Name(), ".crt")
+		crtPath := filepath.Join(m.config.CertDir, f.Name())
+		keyPath := filepath.Join(m.config.CertDir, name+".key")
 
-		certPEMBlock, err := os.ReadFile(certPath)
+		crt, err := os.ReadFile(crtPath)
 		if err != nil {
-			log.Error("Failed to read certificate file", "domain", domain, "err", err)
+			log.Error("Failed to read certificate file", "domain", name, "err", err)
 			continue
 		}
 
-		keyPEMBlock, err := os.ReadFile(keyPath)
+		key, err := os.ReadFile(keyPath)
 		if err != nil {
-			log.Error("Failed to read key file", "domain", domain, "err", err)
+			log.Error("Failed to read key file", "domain", name, "err", err)
 			continue
 		}
 
-		cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+		cert, err := tls.X509KeyPair(crt, key)
 		if err != nil {
-			log.Error("Failed to parse certificate", "domain", domain, "err", err)
+			log.Error("Failed to parse certificate", "domain", name, "err", err)
 			continue
 		}
 
@@ -151,22 +151,22 @@ func (m *Manager) loadCerts() error {
 		if len(cert.Certificate) > 0 {
 			x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
 			if err != nil {
-				log.Error("Failed to parse X509 certificate", "domain", domain, "err", err)
+				log.Error("Failed to parse X509 certificate", "domain", name, "err", err)
 				continue
 			}
 			cert.Leaf = x509Cert
 
 			// Skip expired certificates
 			if time.Now().After(x509Cert.NotAfter) {
-				log.Info("Skipping expired certificate", "domain", domain, "expiry", x509Cert.NotAfter)
+				log.Info("Skipping expired certificate", "domain", name, "expiry", x509Cert.NotAfter)
 				continue
 			}
 		}
 
 		m.mu.Lock()
-		m.certs[domain] = &cert
+		m.certs[name] = &cert
 		m.mu.Unlock()
-		log.Info("Loaded certificate", "domain", domain)
+		log.Info("Loaded certificate", "domain", name)
 	}
 
 	return nil
@@ -186,26 +186,24 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 // ObtainCert obtains a new certificate for the given domain
 func (m *Manager) ObtainCert(domain string) error {
-	// Request certificate
-	request := certificate.ObtainRequest{
+	req := certificate.ObtainRequest{
 		Domains: []string{domain},
 		Bundle:  true,
 	}
 
-	certificates, err := m.client.Certificate.Obtain(request)
+	certs, err := m.client.Certificate.Obtain(req)
 	if err != nil {
 		return fmt.Errorf("failed to obtain certificate: %v", err)
 	}
 
-	// Save certificate
-	return m.saveCertificate(domain, certificates)
+	return m.saveCertificate(domain, certs)
 }
 
 func (m *Manager) saveCertificate(domain string, cert *certificate.Resource) error {
-	certPath := filepath.Join(m.config.CertDir, domain+".crt")
+	crtPath := filepath.Join(m.config.CertDir, domain+".crt")
 	keyPath := filepath.Join(m.config.CertDir, domain+".key")
 
-	if err := os.WriteFile(certPath, cert.Certificate, 0600); err != nil {
+	if err := os.WriteFile(crtPath, cert.Certificate, 0600); err != nil {
 		return fmt.Errorf("failed to save certificate: %v", err)
 	}
 

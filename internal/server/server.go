@@ -68,7 +68,7 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		CFAPIToken: cfg.Cloudflare.APIToken,
 	}
 
-	certm, err := cert.New(certCfg)
+	m, err := cert.New(certCfg)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create certificate manager: %v", err)
@@ -78,7 +78,7 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 		cfg:        cfg,
-		certm:      certm,
+		certm:      m,
 		proxies:    make(map[string]*proxy.Handler),
 		failCerts:  make(map[string]time.Time),
 		configPath: configPath,
@@ -104,7 +104,7 @@ func (s *Server) Start() error {
 		log.Error("Failed to setup config watcher", "err", err)
 	}
 
-	server := &http.Server{
+	srv := &http.Server{
 		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
 		ReadTimeout:       readTimeout,
@@ -120,7 +120,7 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	return server.Serve(ln)
+	return srv.Serve(ln)
 }
 
 // getWildcardDomain returns the wildcard domain if the domain is eligible
@@ -130,11 +130,11 @@ func (s *Server) getWildcardDomain(domain string) (string, bool) {
 		return "", false
 	}
 
-	rootDomain := parts[1]
+	root := parts[1]
 	// Check if root domain is in the configured domains list
 	for _, d := range s.cfg.Domains {
-		if d == rootDomain {
-			return "*." + rootDomain, true
+		if d == root {
+			return "*." + root, true
 		}
 	}
 	return "", false
@@ -149,8 +149,8 @@ func (s *Server) createTLSConfig() *tls.Config {
 		}
 
 		// Try wildcard domain if available
-		if wildcardDomain, ok := s.getWildcardDomain(domain); ok {
-			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wildcardDomain})
+		if wild, ok := s.getWildcardDomain(domain); ok {
+			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wild})
 			if err == nil {
 				return cert, nil
 			}
@@ -201,50 +201,50 @@ func (s *Server) handleHTTPS() http.Handler {
 			return
 		}
 
-		handler := s.findHandler(host)
-		if handler == nil {
+		h := s.findHandler(host)
+		if h == nil {
 			http.Error(w, "Domain not configured", http.StatusNotFound)
 			return
 		}
 
-		handler.ServeHTTP(w, r)
+		h.ServeHTTP(w, r)
 	})
 }
 
 func (s *Server) extractHost(r *http.Request) string {
-	host := strings.ToLower(r.Host)
-	if !strings.Contains(host, ":") {
-		return host
+	h := strings.ToLower(r.Host)
+	if !strings.Contains(h, ":") {
+		return h
 	}
 
-	h, _, err := net.SplitHostPort(host)
+	host, _, err := net.SplitHostPort(h)
 	if err != nil {
 		return ""
 	}
-	return h
+	return host
 }
 
 func (s *Server) findHandler(host string) *proxy.Handler {
 	s.mu.RLock()
-	handler, ok := s.proxies[host]
+	h, ok := s.proxies[host]
 	s.mu.RUnlock()
 
 	if !ok {
-		if wildcardDomain, ok := s.getWildcardDomain(host); ok {
+		if wild, ok := s.getWildcardDomain(host); ok {
 			s.mu.RLock()
-			handler, ok = s.proxies[wildcardDomain]
+			h, ok = s.proxies[wild]
 			s.mu.RUnlock()
 		}
 	}
 
-	return handler
+	return h
 }
 
 func (s *Server) loadProxies(reload bool) error {
-	newProxies := make(map[string]*proxy.Handler)
+	new := make(map[string]*proxy.Handler)
 
-	for domain, cfg := range s.cfg.Proxies {
-		if err := s.setupProxy(domain, cfg, newProxies); err != nil {
+	for d, cfg := range s.cfg.Proxies {
+		if err := s.setupProxy(d, cfg, new); err != nil {
 			if !reload {
 				continue
 			}
@@ -253,19 +253,19 @@ func (s *Server) loadProxies(reload bool) error {
 	}
 
 	s.mu.Lock()
-	s.proxies = newProxies
+	s.proxies = new
 	s.mu.Unlock()
 
 	return nil
 }
 
 func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string]*proxy.Handler) error {
-	target, err := url.Parse(cfg.Upstream)
+	u, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return fmt.Errorf("error parsing upstream URL for %s: %v", domain, err)
 	}
 
-	if err := proxy.CheckTarget(target); err != nil {
+	if err := proxy.CheckTarget(u); err != nil {
 		return fmt.Errorf("upstream not accessible for %s: %v", domain, err)
 	}
 
@@ -273,45 +273,45 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 		return err
 	}
 
-	proxies[domain] = proxy.New(target, domain)
+	proxies[domain] = proxy.New(u, domain)
 	return nil
 }
 
 // handleCertObtain handles certificate obtaining with proper error handling and logging
 func (s *Server) handleCertObtain(domain string, isRetry bool) error {
-	certDomain := domain
-	if wildcardDomain, ok := s.getWildcardDomain(domain); ok {
-		certDomain = wildcardDomain
+	d := domain
+	if wild, ok := s.getWildcardDomain(domain); ok {
+		d = wild
 	}
 
 	// First check if we already have a valid certificate
-	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: certDomain})
+	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: d})
 	if err == nil && cert != nil && !needsRenewal(cert) {
 		if isRetry {
 			// If this is a retry and we have a valid cert, remove it from failed certs
 			delete(s.failCerts, domain)
-			log.Info("Found valid certificate during retry", "domain", certDomain)
+			log.Info("Found valid certificate during retry", "domain", d)
 		}
 		return nil
 	}
 
 	// Need to obtain a new certificate
-	if err := s.certm.ObtainCert(certDomain); err != nil {
+	if err := s.certm.ObtainCert(d); err != nil {
 		if isRetry {
 			s.failCerts[domain] = time.Now()
-			log.Error("Failed to obtain certificate (retry)", "domain", certDomain, "err", err)
+			log.Error("Failed to obtain certificate (retry)", "domain", d, "err", err)
 		} else {
 			s.addFailedCert(domain, err)
-			log.Error("Failed to obtain certificate", "domain", certDomain, "err", err)
+			log.Error("Failed to obtain certificate", "domain", d, "err", err)
 		}
 		return err
 	}
 
 	if isRetry {
 		delete(s.failCerts, domain)
-		log.Info("Successfully obtained certificate (retry)", "domain", certDomain)
+		log.Info("Successfully obtained certificate (retry)", "domain", d)
 	} else {
-		log.Info("Successfully obtained certificate", "domain", certDomain)
+		log.Info("Successfully obtained certificate", "domain", d)
 	}
 
 	return nil
@@ -327,14 +327,14 @@ func (s *Server) renewCerts() {
 			return
 		case <-ticker.C:
 			s.mu.RLock()
-			domains := make([]string, 0, len(s.proxies))
-			for domain := range s.proxies {
-				domains = append(domains, domain)
+			ds := make([]string, 0, len(s.proxies))
+			for d := range s.proxies {
+				ds = append(ds, d)
 			}
 			s.mu.RUnlock()
 
-			for _, domain := range domains {
-				s.handleCertObtain(domain, false)
+			for _, d := range ds {
+				s.handleCertObtain(d, false)
 			}
 		}
 	}
