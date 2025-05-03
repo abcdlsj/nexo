@@ -6,12 +6,15 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge/dns01"
@@ -36,10 +39,76 @@ type Manager struct {
 
 // New creates a new certificate manager
 func New(cfg Config) *Manager {
-	return &Manager{
+	m := &Manager{
 		config: cfg,
 		certs:  make(map[string]*tls.Certificate),
 	}
+
+	// Load existing certificates from disk
+	if err := m.loadCerts(); err != nil {
+		log.Warn("Failed to load certificates from disk", "err", err)
+	}
+
+	return m
+}
+
+// loadCerts loads all existing certificates from the certificate directory
+func (m *Manager) loadCerts() error {
+	files, err := os.ReadDir(m.config.CertDir)
+	if err != nil {
+		return fmt.Errorf("failed to read certificate directory: %v", err)
+	}
+
+	for _, f := range files {
+		if !strings.HasSuffix(f.Name(), ".crt") {
+			continue
+		}
+
+		domain := strings.TrimSuffix(f.Name(), ".crt")
+		certPath := filepath.Join(m.config.CertDir, f.Name())
+		keyPath := filepath.Join(m.config.CertDir, domain+".key")
+
+		certPEMBlock, err := os.ReadFile(certPath)
+		if err != nil {
+			log.Error("Failed to read certificate file", "domain", domain, "err", err)
+			continue
+		}
+
+		keyPEMBlock, err := os.ReadFile(keyPath)
+		if err != nil {
+			log.Error("Failed to read key file", "domain", domain, "err", err)
+			continue
+		}
+
+		cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+		if err != nil {
+			log.Error("Failed to parse certificate", "domain", domain, "err", err)
+			continue
+		}
+
+		// Parse the certificate to get the expiry date
+		if len(cert.Certificate) > 0 {
+			x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				log.Error("Failed to parse X509 certificate", "domain", domain, "err", err)
+				continue
+			}
+			cert.Leaf = x509Cert
+
+			// Skip expired certificates
+			if time.Now().After(x509Cert.NotAfter) {
+				log.Info("Skipping expired certificate", "domain", domain, "expiry", x509Cert.NotAfter)
+				continue
+			}
+		}
+
+		m.mu.Lock()
+		m.certs[domain] = &cert
+		m.mu.Unlock()
+		log.Info("Loaded certificate", "domain", domain)
+	}
+
+	return nil
 }
 
 // GetCertificate implements the tls.Config.GetCertificate function
@@ -133,7 +202,7 @@ func (m *Manager) saveCertificate(domain string, cert *certificate.Resource) err
 	certPath := filepath.Join(m.config.CertDir, domain+".crt")
 	keyPath := filepath.Join(m.config.CertDir, domain+".key")
 
-	if err := os.WriteFile(certPath, cert.Certificate, 0644); err != nil {
+	if err := os.WriteFile(certPath, cert.Certificate, 0600); err != nil {
 		return fmt.Errorf("failed to save certificate: %v", err)
 	}
 
@@ -146,25 +215,17 @@ func (m *Manager) saveCertificate(domain string, cert *certificate.Resource) err
 		return fmt.Errorf("failed to parse certificate: %v", err)
 	}
 
-	m.mu.Lock()
-	m.certs[domain] = &tlsCert
-	m.mu.Unlock()
-
-	return nil
-}
-
-// LoadCertificate loads an existing certificate from disk
-func (m *Manager) LoadCertificate(domain string) error {
-	certPath := filepath.Join(m.config.CertDir, domain+".crt")
-	keyPath := filepath.Join(m.config.CertDir, domain+".key")
-
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return err
+	// Parse the certificate to get the expiry date
+	if len(tlsCert.Certificate) > 0 {
+		x509Cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("failed to parse certificate: %v", err)
+		}
+		tlsCert.Leaf = x509Cert
 	}
 
 	m.mu.Lock()
-	m.certs[domain] = &cert
+	m.certs[domain] = &tlsCert
 	m.mu.Unlock()
 
 	return nil

@@ -124,11 +124,32 @@ func (s *Server) createTLSConfig() *tls.Config {
 	return &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			return &tls.Config{
-				GetCertificate: s.certm.GetCertificate,
+				GetCertificate: s.getCertificate,
 				MinVersion:     tls.VersionTLS12,
 			}, nil
 		},
 	}
+}
+
+// getCertificate is a wrapper around cert.Manager's GetCertificate that adds wildcard certificate support
+func (s *Server) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	// First try exact domain
+	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: hello.ServerName})
+	if err == nil {
+		return cert, nil
+	}
+
+	// If exact domain fails, try wildcard
+	parts := strings.SplitN(hello.ServerName, ".", 2)
+	if len(parts) == 2 {
+		wildcardDomain := "*." + parts[1]
+		cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wildcardDomain})
+		if err == nil {
+			return cert, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no certificate found for domain: %s", hello.ServerName)
 }
 
 func (s *Server) createListener() (net.Listener, error) {
