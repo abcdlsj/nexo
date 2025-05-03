@@ -40,6 +40,11 @@ type Manager struct {
 
 // New creates a new certificate manager
 func New(cfg Config) (*Manager, error) {
+	// Create certificate directory if not exists
+	if err := os.MkdirAll(cfg.CertDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create cert directory: %v", err)
+	}
+
 	// Create ACME client first
 	client, err := createClient(cfg)
 	if err != nil {
@@ -181,11 +186,6 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 // ObtainCert obtains a new certificate for the given domain
 func (m *Manager) ObtainCert(domain string) error {
-	// Create certificate directory if not exists
-	if err := os.MkdirAll(m.config.CertDir, 0755); err != nil {
-		return fmt.Errorf("failed to create cert directory: %v", err)
-	}
-
 	// Request certificate
 	request := certificate.ObtainRequest{
 		Domains: []string{domain},
