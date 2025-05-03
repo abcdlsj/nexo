@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/abcdlsj/nexo/internal/server"
@@ -30,7 +31,11 @@ It supports wildcard certificates and configuration through YAML files.`,
 				return err
 			}
 
-			srv := server.New(cfg, cfgFile)
+			srv, err := server.New(cfg, cfgFile)
+			if err != nil {
+				return fmt.Errorf("failed to create server: %v", err)
+			}
+
 			return srv.Start()
 		},
 	}

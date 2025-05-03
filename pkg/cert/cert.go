@@ -35,13 +35,21 @@ type Manager struct {
 	config Config
 	mu     sync.RWMutex
 	certs  map[string]*tls.Certificate
+	client *lego.Client
 }
 
 // New creates a new certificate manager
-func New(cfg Config) *Manager {
+func New(cfg Config) (*Manager, error) {
+	// Create ACME client first
+	client, err := createClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ACME client: %v", err)
+	}
+
 	m := &Manager{
 		config: cfg,
 		certs:  make(map[string]*tls.Certificate),
+		client: client,
 	}
 
 	// Load existing certificates from disk
@@ -49,7 +57,55 @@ func New(cfg Config) *Manager {
 		log.Warn("Failed to load certificates from disk", "err", err)
 	}
 
-	return m
+	return m, nil
+}
+
+// createClient creates a new ACME client with the given configuration
+func createClient(cfg Config) (*lego.Client, error) {
+	// Generate private key for user
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate private key: %v", err)
+	}
+
+	user := &User{
+		Email: cfg.Email,
+		key:   privateKey,
+	}
+
+	config := lego.NewConfig(user)
+	config.CADirURL = lego.LEDirectoryProduction
+	config.Certificate.KeyType = certcrypto.RSA2048
+
+	client, err := lego.NewClient(config)
+	if err != nil {
+		return nil, err
+	}
+
+	cfProvider, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
+		AuthToken:          cfg.CFAPIToken,
+		TTL:                120,
+		PropagationTimeout: 180 * time.Second,
+		PollingInterval:    2 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cloudflare provider: %v", err)
+	}
+
+	if err := client.Challenge.SetDNS01Provider(cfProvider,
+		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"}),
+		dns01.DisableCompletePropagationRequirement()); err != nil {
+		return nil, err
+	}
+
+	// Register user if necessary
+	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register user: %v", err)
+	}
+	user.Registration = reg
+
+	return client, nil
 }
 
 // loadCerts loads all existing certificates from the certificate directory
@@ -130,72 +186,19 @@ func (m *Manager) ObtainCert(domain string) error {
 		return fmt.Errorf("failed to create cert directory: %v", err)
 	}
 
-	// Initialize ACME client
-	client, err := m.createClient()
-	if err != nil {
-		return fmt.Errorf("failed to create ACME client: %v", err)
-	}
-
 	// Request certificate
 	request := certificate.ObtainRequest{
 		Domains: []string{domain},
 		Bundle:  true,
 	}
 
-	certificates, err := client.Certificate.Obtain(request)
+	certificates, err := m.client.Certificate.Obtain(request)
 	if err != nil {
 		return fmt.Errorf("failed to obtain certificate: %v", err)
 	}
 
 	// Save certificate
 	return m.saveCertificate(domain, certificates)
-}
-
-func (m *Manager) createClient() (*lego.Client, error) {
-	// Generate private key for user
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %v", err)
-	}
-
-	user := &User{
-		Email: m.config.Email,
-		key:   privateKey,
-	}
-
-	config := lego.NewConfig(user)
-	config.CADirURL = lego.LEDirectoryProduction
-	config.Certificate.KeyType = certcrypto.RSA2048
-
-	client, err := lego.NewClient(config)
-	if err != nil {
-		return nil, err
-	}
-
-	cfProvider, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
-		AuthToken:          m.config.CFAPIToken,
-		TTL:                120,
-		PropagationTimeout: 180 * time.Second,
-		PollingInterval:    2 * time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cloudflare provider: %v", err)
-	}
-
-	if err := client.Challenge.SetDNS01Provider(cfProvider,
-		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"}),
-		dns01.DisableCompletePropagationRequirement()); err != nil {
-		return nil, err
-	}
-
-	// Register user if necessary
-	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to register user: %v", err)
-	}
-	user.Registration = reg
-
-	return client, nil
 }
 
 func (m *Manager) saveCertificate(domain string, cert *certificate.Resource) error {

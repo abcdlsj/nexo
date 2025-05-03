@@ -59,7 +59,7 @@ type Server struct {
 }
 
 // New creates a new server instance
-func New(cfg *config.Config, configPath string) *Server {
+func New(cfg *config.Config, configPath string) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	certCfg := cert.Config{
@@ -68,11 +68,17 @@ func New(cfg *config.Config, configPath string) *Server {
 		CFAPIToken: cfg.Cloudflare.APIToken,
 	}
 
+	certm, err := cert.New(certCfg)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create certificate manager: %v", err)
+	}
+
 	s := &Server{
 		ctx:        ctx,
 		cancel:     cancel,
 		cfg:        cfg,
-		certm:      cert.New(certCfg),
+		certm:      certm,
 		proxies:    make(map[string]*proxy.Handler),
 		failCerts:  make(map[string]time.Time),
 		configPath: configPath,
@@ -84,7 +90,7 @@ func New(cfg *config.Config, configPath string) *Server {
 	// Start retry failed certificates goroutine
 	go s.retryCerts()
 
-	return s
+	return s, nil
 }
 
 // Start starts the HTTPS server
