@@ -26,16 +26,31 @@ const (
 // Config represents the configuration for a proxy
 type Config struct {
 	Upstream string `mapstructure:"upstream"`
+	Redirect string `mapstructure:"redirect"`
 }
 
 // Handler represents a proxy handler
 type Handler struct {
-	proxy *httputil.ReverseProxy
-	host  string
+	proxy    *httputil.ReverseProxy
+	redirect string
+	host     string
 }
 
 // New creates a new proxy handler
-func New(target *url.URL, host string) *Handler {
+func New(cfg *Config, host string) *Handler {
+	if cfg.Redirect != "" {
+		return &Handler{
+			redirect: cfg.Redirect,
+			host:     host,
+		}
+	}
+
+	target, err := url.Parse(cfg.Upstream)
+	if err != nil {
+		log.Error("Failed to parse upstream URL", "domain", host, "err", err)
+		return nil
+	}
+
 	p := httputil.NewSingleHostReverseProxy(target)
 	p.Director = createDirector(p.Director)
 	p.ModifyResponse = createResponseModifier(target, host)
@@ -49,6 +64,14 @@ func New(target *url.URL, host string) *Handler {
 
 // ServeHTTP implements the http.Handler interface
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.redirect != "" {
+		target := h.redirect
+		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			target = "https://" + target
+		}
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		return
+	}
 	h.proxy.ServeHTTP(w, r)
 }
 
