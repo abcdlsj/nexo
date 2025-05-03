@@ -165,8 +165,8 @@ func CheckTarget(u *url.URL) error {
 		Timeout: 5 * time.Second,
 	}
 
-	if !strings.HasPrefix(u.Scheme, "http") {
-		u.Scheme = "http"
+	if !strings.HasPrefix(u.Scheme, "http") && !strings.HasPrefix(u.Scheme, "https") {
+		u.Scheme = "https"
 	}
 
 	r, err := c.Get(u.String())

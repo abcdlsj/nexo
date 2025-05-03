@@ -264,15 +264,9 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 		return fmt.Errorf("either upstream or redirect must be configured for domain %s", domain)
 	}
 
-	if cfg.Redirect != "" {
-		if err := s.handleCertObtain(domain, false); err != nil {
-			return err
-		}
-		proxies[domain] = proxy.New(cfg, domain)
-		return nil
-	}
+	target := orStr(cfg.Redirect, cfg.Upstream)
 
-	u, err := url.Parse(cfg.Upstream)
+	u, err := url.Parse(target)
 	if err != nil {
 		return fmt.Errorf("error parsing upstream URL for %s: %v", domain, err)
 	}
@@ -458,4 +452,12 @@ func (s *Server) Reload() error {
 
 	s.cfg = newCfg
 	return s.loadProxies(true)
+}
+
+func orStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+
+	return b
 }
