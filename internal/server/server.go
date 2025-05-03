@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -54,12 +55,12 @@ type Server struct {
 	mu sync.RWMutex
 
 	// Configuration watcher
-	watcher    *fsnotify.Watcher
-	configPath string
+	watcher *fsnotify.Watcher
+	cfgPath string
 }
 
 // New creates a new server instance
-func New(cfg *config.Config, configPath string) (*Server, error) {
+func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	certCfg := cert.Config{
@@ -75,13 +76,13 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	}
 
 	s := &Server{
-		ctx:        ctx,
-		cancel:     cancel,
-		cfg:        cfg,
-		certm:      m,
-		proxies:    make(map[string]*proxy.Handler),
-		failCerts:  make(map[string]time.Time),
-		configPath: configPath,
+		ctx:       ctx,
+		cancel:    cancel,
+		cfg:       cfg,
+		certm:     m,
+		proxies:   make(map[string]*proxy.Handler),
+		failCerts: make(map[string]time.Time),
+		cfgPath:   cfgPath,
 	}
 
 	// Start certificate renewal goroutine
@@ -417,7 +418,7 @@ func (s *Server) setupConfigWatcher() error {
 				if !ok {
 					return
 				}
-				if event.Op&fsnotify.Write == fsnotify.Write {
+				if event.Name == s.cfgPath && event.Op&fsnotify.Write == fsnotify.Write {
 					log.Info("Config file modified, reloading configuration")
 					if err := s.Reload(); err != nil {
 						log.Error("Failed to reload configuration", "err", err)
@@ -434,9 +435,9 @@ func (s *Server) setupConfigWatcher() error {
 		}
 	}()
 
-	// Watch the config file
-	if s.configPath != "" {
-		return watcher.Add(s.configPath)
+	// Watch the config directory
+	if s.cfgPath != "" {
+		return watcher.Add(filepath.Dir(s.cfgPath))
 	}
 
 	return nil
@@ -445,7 +446,7 @@ func (s *Server) setupConfigWatcher() error {
 // Reload reloads the configuration and updates the proxies
 func (s *Server) Reload() error {
 	// Reload configuration file
-	newCfg, err := config.Load(s.configPath)
+	newCfg, err := config.Load(s.cfgPath)
 	if err != nil {
 		return fmt.Errorf("failed to reload config: %v", err)
 	}
