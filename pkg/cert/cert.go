@@ -98,8 +98,7 @@ func createClient(cfg Config) (*lego.Client, error) {
 	}
 
 	if err := client.Challenge.SetDNS01Provider(p,
-		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"}),
-		dns01.DisableCompletePropagationRequirement()); err != nil {
+		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"})); err != nil {
 		return nil, err
 	}
 
