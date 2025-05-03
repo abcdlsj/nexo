@@ -7,6 +7,7 @@ A simple HTTPS reverse proxy with automatic certificate management using Cloudfl
 - Automatic HTTPS certificate management using Let's Encrypt
 - Cloudflare DNS challenge for certificate validation (no need for port 80)
 - Smart wildcard certificate management
+- Support for both proxy and redirect configurations
 - Automatic certificate renewal (30 days before expiration)
 - Dynamic configuration through YAML
 - Docker support
@@ -54,29 +55,33 @@ Create or edit `/etc/nexo/config.yaml` (or `~/.nexo/config.yaml` for non-root us
 base_dir: /etc/nexo          # Default config directory
 cert_dir: /etc/nexo/certs    # Default certificate directory
 email: your-email@example.com
+
+# Cloudflare settings
 cloudflare:
   api_token: your-cloudflare-api-token    # Required for DNS challenge
 
 # Wildcard certificate domains
-domains:
-  - example.com                # Will obtain *.example.com certificate
-  - yourdomain.com            # Will obtain *.yourdomain.com certificate
+wildcards:
+  - "*.example.com"    # Will obtain *.example.com certificate
+  - "*.yourdomain.com" # Will obtain *.yourdomain.com certificate
 
 # Proxy configurations
 proxies:
-  # Using wildcard certificate from example.com
-  blog.example.com:
-    upstream: http://localhost:3000
-  api.example.com:
+  # Proxy to upstream server
+  "api.example.com":
     upstream: http://localhost:8080
-
-  # Using wildcard certificate from yourdomain.com
-  dev.yourdomain.com:
-    upstream: http://localhost:3001
-
-  # Will obtain a separate certificate
-  specific.otherdomain.com:
-    upstream: http://localhost:5000
+  
+  # Redirect to another domain
+  "example.com":
+    redirect: www.example.com  # Will redirect to https://www.example.com
+  
+  # Proxy with wildcard certificate
+  "blog.example.com":
+    upstream: http://localhost:3000
+  
+  # Redirect to external site
+  "github.example.com":
+    redirect: github.com/yourusername  # Will redirect to https://github.com/yourusername
 ```
 
 ### Configuration Explanation
@@ -88,14 +93,15 @@ proxies:
    - `cloudflare.api_token`: Your Cloudflare API token
 
 2. **Certificate Management**
-   - List domains in `domains` section to use wildcard certificates
-   - Domains not listed will get individual certificates
+   - List domains in `wildcards` section to obtain wildcard certificates
+   - Other domains in `proxies` will get individual certificates automatically
    - Certificates are automatically renewed 30 days before expiration
 
 3. **Proxy Settings**
-   - Each entry under `proxies` maps a domain to an upstream server
-   - Wildcard certificates are automatically used for matching domains
-   - Other domains get individual certificates
+   Each entry under `proxies` can be configured as either:
+   - A proxy to an upstream server using `upstream`
+   - A redirect to another domain using `redirect`
+   - Domains matching wildcard certificates will use them automatically
 
 ## Usage
 
@@ -110,6 +116,19 @@ sudo nexo server
 - Configuration changes are detected and applied automatically
 - No need to open port 80 (uses Cloudflare DNS challenge)
 - Supports both system-wide (/etc/nexo) and user-specific (~/.nexo) configuration
+- Redirects automatically add https:// if not specified
+
+## Project Structure
+
+```
+nexo/
+├── internal/
+│   └── server/      # Core server implementation
+└── pkg/
+    ├── cert/        # Certificate management
+    ├── config/      # Configuration handling
+    └── proxy/       # Proxy and redirect handling
+```
 
 ## Troubleshooting
 
@@ -117,7 +136,7 @@ sudo nexo server
 2. Check Cloudflare API Token permissions
 3. Ensure upstream services are running
 4. Check server logs for errors
-5. Verify configuration file syntax and permissions
+5. Verify configuration file syntax
 
 ## License
 
