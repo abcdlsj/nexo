@@ -130,13 +130,13 @@ func (s *Server) getWildcardDomain(domain string) (string, bool) {
 		return "", false
 	}
 
-	root := parts[1]
-	// Check if root domain is in the configured domains list
-	for _, d := range s.cfg.Domains {
-		if d == root {
-			return "*." + root, true
+	wd := "*." + parts[1]
+	for _, d := range s.cfg.Wildcards {
+		if d == wd {
+			return d, true
 		}
 	}
+
 	return "", false
 }
 
