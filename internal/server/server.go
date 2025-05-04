@@ -418,6 +418,8 @@ func (s *Server) setupConfigWatcher() error {
 				if !ok {
 					return
 				}
+				// TODO: Editing a file may cause multiple events, can fix it by
+				// https://github.com/abcdlsj/share/blob/master/go/gresh/main.go#L104
 				if event.Name == s.cfgPath && event.Op&fsnotify.Write == fsnotify.Write {
 					log.Info("Config file modified, reloading configuration")
 					if err := s.Reload(); err != nil {
