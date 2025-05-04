@@ -14,8 +14,8 @@ import (
 
 const (
 	// Cache durations
-	longTermCache  = "public, max-age=604800, stale-while-revalidate=86400" // 7 days
-	shortTermCache = "public, max-age=3600, stale-while-revalidate=600"     // 1 hour
+	longTermCache  = "public, max-age=86400, stale-while-revalidate=3600" // 1 day, stale 1 hour
+	shortTermCache = "public, max-age=300, stale-while-revalidate=60"     // 5 mins, stale 1 min
 	noCache        = "no-cache, no-store, must-revalidate"
 
 	// File extensions and content types that should use long-term caching
@@ -133,34 +133,36 @@ func createErrorHandler(host string) func(http.ResponseWriter, *http.Request, er
 
 func setCacheHeaders(r *http.Response) {
 	ct := r.Header.Get("Content-Type")
-	p := r.Request.URL.Path
-	ext := strings.ToLower(filepath.Ext(p))
+	ext := strings.ToLower(filepath.Ext(r.Request.URL.Path))
+
+	isStatic := func() bool {
+		if ext == "" {
+			return false
+		}
+		for _, p := range strings.Split(staticPrefixes, ",") {
+			if strings.HasPrefix(ct, p) {
+				return true
+			}
+		}
+		return strings.Contains(staticExtensions, ext)
+	}
+
+	isDynamic := func() bool {
+		return strings.HasPrefix(ct, "text/html") ||
+			strings.HasPrefix(ct, "application/json")
+	}
 
 	switch {
-	case isStaticContent(ct, ext):
-		r.Header.Set("Cache-Control", longTermCache)
-	case isDynamicContent(ct):
+	case isDynamic():
 		r.Header.Set("Cache-Control", noCache)
 		r.Header.Set("Pragma", "no-cache")
 		r.Header.Set("Expires", "0")
+	case isStatic():
+		r.Header.Set("Cache-Control", longTermCache)
 	default:
 		r.Header.Set("Cache-Control", shortTermCache)
 	}
 	r.Header.Set("Vary", "Accept-Encoding")
-}
-
-func isStaticContent(ct, ext string) bool {
-	for _, p := range strings.Split(staticPrefixes, ",") {
-		if strings.HasPrefix(ct, p) {
-			return true
-		}
-	}
-	return strings.Contains(staticExtensions, ext)
-}
-
-func isDynamicContent(ct string) bool {
-	return strings.HasPrefix(ct, "text/html") ||
-		strings.HasPrefix(ct, "application/json")
 }
 
 // CheckTarget verifies if the target URL is accessible
