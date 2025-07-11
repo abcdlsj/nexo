@@ -138,6 +138,23 @@ nexo/
 4. Check server logs for errors
 5. Verify configuration file syntax
 
+## Others
+
+```
+# 制 HTTPS 连接频率（每分钟最多20个新连接）
+iptables -A INPUT -p tcp --dport 443 -m state --state NEW -m recent --set --name https_conn
+iptables -A INPUT -p tcp --dport 443 -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name https_conn -j DROP
+
+# 限制每个IP的并发连接数（最多10个）
+iptables -A INPUT -p tcp --dport 443 -m connlimit --connlimit-above 10 -j DROP
+
+# 防止 SYN flood 攻击
+iptables -A INPUT -p tcp --dport 443 -m state --state NEW -m limit --limit 2/s --limit-burst 5 -j ACCEPT
+
+# 允许正常的 HTTPS 流量
+iptables -A INPUT -p tcp --dport 443 -m state --state NEW -j ACCEPT
+```
+
 ## License
 
 MIT 
