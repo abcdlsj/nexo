@@ -7,10 +7,15 @@ email: your-email@example.com
 cloudflare:
   api_token: your-cloudflare-api-token    # 从 Cloudflare 获取的 API Token
 
-# 通配符域名证书配置
-domains:
-  - example.com                # 将为 *.example.com 申请通配符证书
-  - yourdomain.com             # 将为 *.yourdomain.com 申请通配符证书
+# 通配符域名证书配置（与代码字段一致：wildcards）
+wildcards:
+  - "*.example.com"           # 将为 *.example.com 申请通配符证书
+  - "*.yourdomain.com"        # 将为 *.yourdomain.com 申请通配符证书
+
+# 监听与日志
+listen_addr: ":443"
+admin_addr: ":8080"
+log_level: "info"
 
 # 代理配置
 proxies:

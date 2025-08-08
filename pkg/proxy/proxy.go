@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -56,6 +58,22 @@ func New(cfg *Config, host string) *Handler {
 	p.ModifyResponse = createResponseModifier(target, host)
 	p.ErrorHandler = createErrorHandler(host)
 
+	// custom transport
+	p.Transport = &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			NextProtos: []string{"h2", "http/1.1"},
+		},
+	}
+
 	return &Handler{
 		proxy: p,
 		host:  host,
@@ -76,7 +94,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, EnsureSchema(h.redirect), http.StatusTemporaryRedirect)
 		return
 	}
+	// access log (can be made configurable)
+	start := time.Now()
 	h.proxy.ServeHTTP(w, r)
+	log.Debug("proxy", "host", h.host, "method", r.Method, "uri", r.URL.String(), "t", time.Since(start))
 }
 
 func createDirector(orig func(*http.Request)) func(*http.Request) {
@@ -84,6 +105,9 @@ func createDirector(orig func(*http.Request)) func(*http.Request) {
 		orig(r)
 		r.Header.Set("X-Forwarded-Host", r.Host)
 		r.Header.Set("X-Forwarded-Proto", "https")
+		if ip := clientIPFromRequest(r); ip != "" {
+			r.Header.Set("X-Forwarded-For", ip)
+		}
 		if _, ok := r.Header["User-Agent"]; !ok {
 			r.Header.Set("User-Agent", "")
 		}
@@ -165,21 +189,51 @@ func setCacheHeaders(r *http.Response) {
 	r.Header.Set("Vary", "Accept-Encoding")
 }
 
+func clientIPFromRequest(r *http.Request) string {
+	// prioritize X-Real-IP / X-Forwarded-For from previous proxies
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	if rip := r.Header.Get("X-Real-IP"); rip != "" {
+		return rip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // CheckTarget verifies if the target URL is accessible
 func CheckTarget(u *url.URL) error {
-	c := &http.Client{
-		Timeout: 5 * time.Second,
-	}
+	c := &http.Client{Timeout: 5 * time.Second}
 
 	if !strings.HasPrefix(u.Scheme, "http") && !strings.HasPrefix(u.Scheme, "https") {
 		u.Scheme = "https"
 	}
 
-	r, err := c.Get(u.String())
+	req, err := http.NewRequest(http.MethodHead, u.String(), nil)
 	if err != nil {
-		return fmt.Errorf("target not accessible: %v", err)
+		return fmt.Errorf("failed to build request: %v", err)
 	}
-	defer r.Body.Close()
-
+	r, err := c.Do(req)
+	if err != nil || r.StatusCode == http.StatusMethodNotAllowed {
+		// fallback to GET if HEAD not supported
+		if r != nil {
+			r.Body.Close()
+		}
+		r2, err2 := c.Get(u.String())
+		if err2 != nil {
+			return fmt.Errorf("target not accessible: %v", err2)
+		}
+		defer r2.Body.Close()
+		return nil
+	}
+	if r != nil {
+		r.Body.Close()
+	}
 	return nil
 }

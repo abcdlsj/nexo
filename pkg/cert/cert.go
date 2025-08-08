@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +37,7 @@ type Manager struct {
 	mu     sync.RWMutex
 	certs  map[string]*tls.Certificate
 	client *lego.Client
+	user   *User
 }
 
 // New creates a new certificate manager
@@ -45,8 +47,8 @@ func New(cfg Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create cert directory: %v", err)
 	}
 
-	// Create ACME client first
-	c, err := createClient(cfg)
+	// Create ACME client first (load or create account)
+	c, u, err := createClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ACME client: %v", err)
 	}
@@ -55,6 +57,7 @@ func New(cfg Config) (*Manager, error) {
 		config: cfg,
 		certs:  make(map[string]*tls.Certificate),
 		client: c,
+		user:   u,
 	}
 
 	// Load existing certificates from disk
@@ -66,25 +69,34 @@ func New(cfg Config) (*Manager, error) {
 }
 
 // createClient creates a new ACME client with the given configuration
-func createClient(cfg Config) (*lego.Client, error) {
-	// Generate private key for user
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %v", err)
+func createClient(cfg Config) (*lego.Client, *User, error) {
+	// Try to load existing account key
+	accountKeyPath := filepath.Join(cfg.CertDir, "account.key")
+	var key crypto.PrivateKey
+	if data, err := os.ReadFile(accountKeyPath); err == nil {
+		if k, err := parseECDSAPrivateKeyFromPEM(data); err == nil {
+			key = k
+		}
+	}
+	if key == nil {
+		var err error
+		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate private key: %v", err)
+		}
+		if err := saveECDSAPrivateKeyToPEM(accountKeyPath, key.(*ecdsa.PrivateKey)); err != nil {
+			log.Warn("failed to persist account key", "err", err)
+		}
 	}
 
-	u := &User{
-		Email: cfg.Email,
-		key:   key,
-	}
-
+	u := &User{Email: cfg.Email, key: key}
 	c := lego.NewConfig(u)
 	c.CADirURL = lego.LEDirectoryProduction
 	c.Certificate.KeyType = certcrypto.RSA2048
 
 	client, err := lego.NewClient(c)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	p, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
@@ -94,22 +106,38 @@ func createClient(cfg Config) (*lego.Client, error) {
 		PollingInterval:    2 * time.Second,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cloudflare provider: %v", err)
+		return nil, nil, fmt.Errorf("failed to create cloudflare provider: %v", err)
 	}
 
 	if err := client.Challenge.SetDNS01Provider(p,
 		dns01.AddRecursiveNameservers([]string{"1.1.1.1:53", "8.8.8.8:53"})); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Register user if necessary
-	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
-	if err != nil {
-		return nil, fmt.Errorf("failed to register user: %v", err)
+	// Try to load existing registration marker or register
+	accountRegPath := filepath.Join(cfg.CertDir, "account.reg")
+	if _, err := os.Stat(accountRegPath); err == nil {
+		reg, err := client.Registration.QueryRegistration()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to query registration: %v", err)
+		}
+		u.Registration = reg
+	} else {
+		reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		if err != nil {
+			// fallback to query if already registered remotely
+			reg, qerr := client.Registration.QueryRegistration()
+			if qerr != nil {
+				return nil, nil, fmt.Errorf("failed to register user: %v", err)
+			}
+			u.Registration = reg
+		} else {
+			u.Registration = reg
+			_ = os.WriteFile(accountRegPath, []byte("registered"), 0600)
+		}
 	}
-	u.Registration = reg
 
-	return client, nil
+	return client, u, nil
 }
 
 // loadCerts loads all existing certificates from the certificate directory
@@ -248,4 +276,22 @@ func (u *User) GetRegistration() *registration.Resource {
 
 func (u *User) GetPrivateKey() crypto.PrivateKey {
 	return u.key
+}
+
+// Helpers for PEM ECDSA key
+func saveECDSAPrivateKeyToPEM(path string, key *ecdsa.PrivateKey) error {
+	b, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	pemBlock := &pem.Block{Type: "EC PRIVATE KEY", Bytes: b}
+	return os.WriteFile(path, pem.EncodeToMemory(pemBlock), 0600)
+}
+
+func parseECDSAPrivateKeyFromPEM(pemBytes []byte) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		return nil, fmt.Errorf("invalid ECDSA private key PEM")
+	}
+	return x509.ParseECPrivateKey(block.Bytes)
 }

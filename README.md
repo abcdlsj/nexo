@@ -58,7 +58,12 @@ email: your-email@example.com
 
 # Cloudflare settings
 cloudflare:
-  api_token: your-cloudflare-api-token    # Required for DNS challenge
+  api_token: your-cloudflare-api-token    # Required for DNS challenge (or set env NEXO_CLOUDFLARE_API_TOKEN)
+
+# Listening & logs
+listen_addr: ":443"
+admin_addr: ":8080"
+log_level: "info"
 
 # Wildcard certificate domains
 wildcards:
@@ -90,7 +95,10 @@ proxies:
    - `base_dir`: Directory for configuration files
    - `cert_dir`: Directory for storing certificates
    - `email`: Your email for Let's Encrypt
-   - `cloudflare.api_token`: Your Cloudflare API token
+   - `cloudflare.api_token`: Your Cloudflare API token (or env `NEXO_CLOUDFLARE_API_TOKEN`)
+   - `listen_addr`: HTTPS listen address (default `:443`)
+   - `admin_addr`: Admin HTTP listen address (default `:8080`)
+   - `log_level`: Log level (default `info`)
 
 2. **Certificate Management**
    - List domains in `wildcards` section to obtain wildcard certificates
@@ -105,10 +113,16 @@ proxies:
 
 ## Usage
 
-Start the server (requires root privileges for port 443):
+Start the server:
 ```bash
-sudo nexo server
+nexo server --listen-addr=:8443 --admin-addr=:8080 --log-level=info
 ```
+
+Flags override config file:
+- `--config`: path to config file (default `/etc/nexo/config.yaml`)
+- `--listen-addr`: HTTPS listen address (default `:443`)
+- `--admin-addr`: admin HTTP address for health checks (default `:8080`)
+- `--log-level`: debug|info|warn|error
 
 ## Notes
 

@@ -57,6 +57,14 @@ type Server struct {
 	// Configuration watcher
 	watcher *fsnotify.Watcher
 	cfgPath string
+
+	// HTTP servers
+	httpsSrv *http.Server
+	adminSrv *http.Server
+	ln       net.Listener
+
+	// readiness state
+	ready bool
 }
 
 // New creates a new server instance
@@ -95,7 +103,7 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 }
 
 // Start starts the HTTPS server
-func (s *Server) Start() error {
+func (s *Server) StartHTTPS() error {
 	if err := s.loadProxies(false); err != nil {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
@@ -105,8 +113,8 @@ func (s *Server) Start() error {
 		log.Error("Failed to setup config watcher", "err", err)
 	}
 
-	srv := &http.Server{
-		Addr:              ":443",
+	s.httpsSrv = &http.Server{
+		Addr:              s.cfg.ListenAddr,
 		Handler:           s.handleHTTPS(),
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
@@ -120,8 +128,37 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
+	s.ln = ln
 
-	return srv.Serve(ln)
+	s.setReady(true)
+	return s.httpsSrv.Serve(ln)
+}
+
+// StartAdmin starts plain HTTP admin server for health checks
+func (s *Server) StartAdmin() error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.isReady() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready"))
+			return
+		}
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+	})
+
+	s.adminSrv = &http.Server{
+		Addr:              s.cfg.AdminAddr,
+		Handler:           mux,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
+	}
+	return s.adminSrv.ListenAndServe()
 }
 
 // getWildcardDomain returns the wildcard domain if the domain is eligible
@@ -167,13 +204,14 @@ func (s *Server) createTLSConfig() *tls.Config {
 					return getCert(hello.ServerName)
 				},
 				MinVersion: tls.VersionTLS12,
+				NextProtos: []string{"h2", "http/1.1"},
 			}, nil
 		},
 	}
 }
 
 func (s *Server) createListener() (net.Listener, error) {
-	ln, err := net.Listen("tcp", ":443")
+	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener: %v", err)
 	}
@@ -185,11 +223,27 @@ func (s *Server) createListener() (net.Listener, error) {
 // Stop stops the server
 func (s *Server) Stop() {
 	if s.watcher != nil {
-		s.watcher.Close()
+		_ = s.watcher.Close()
 	}
 	if s.cancel != nil {
 		s.cancel()
 	}
+}
+
+// Shutdown gracefully shuts down https and admin servers
+func (s *Server) Shutdown(ctx context.Context) error {
+	var errHTTPS, errAdmin error
+	if s.httpsSrv != nil {
+		errHTTPS = s.httpsSrv.Shutdown(ctx)
+	}
+	if s.adminSrv != nil {
+		errAdmin = s.adminSrv.Shutdown(ctx)
+	}
+	s.Stop()
+	if errHTTPS != nil {
+		return errHTTPS
+	}
+	return errAdmin
 }
 
 func (s *Server) handleHTTPS() http.Handler {
@@ -201,6 +255,9 @@ func (s *Server) handleHTTPS() http.Handler {
 			http.Error(w, "Invalid host", http.StatusBadRequest)
 			return
 		}
+
+		// security headers (can be made configurable)
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 
 		h := s.findHandler(host)
 		if h == nil {
@@ -233,7 +290,7 @@ func (s *Server) findHandler(host string) *proxy.Handler {
 	if !ok {
 		if wild, ok := s.getWildcardDomain(host); ok {
 			s.mu.RLock()
-			h, ok = s.proxies[wild]
+			h = s.proxies[wild]
 			s.mu.RUnlock()
 		}
 	}
@@ -256,6 +313,7 @@ func (s *Server) loadProxies(reload bool) error {
 	s.mu.Lock()
 	s.proxies = new
 	s.mu.Unlock()
+	s.setReady(true)
 
 	return nil
 }
@@ -296,7 +354,9 @@ func (s *Server) handleCertObtain(domain string, isRetry bool) error {
 	if err == nil && cert != nil && !needsRenewal(cert) {
 		if isRetry {
 			// If this is a retry and we have a valid cert, remove it from failed certs
+			s.failCertsMu.Lock()
 			delete(s.failCerts, domain)
+			s.failCertsMu.Unlock()
 			log.Info("Found valid certificate during retry", "domain", d)
 		}
 		return nil
@@ -305,7 +365,9 @@ func (s *Server) handleCertObtain(domain string, isRetry bool) error {
 	// Need to obtain a new certificate
 	if err := s.certm.ObtainCert(d); err != nil {
 		if isRetry {
+			s.failCertsMu.Lock()
 			s.failCerts[domain] = time.Now()
+			s.failCertsMu.Unlock()
 			log.Error("Failed to obtain certificate (retry)", "domain", d, "err", err)
 		} else {
 			s.addFailedCert(domain, err)
@@ -315,7 +377,9 @@ func (s *Server) handleCertObtain(domain string, isRetry bool) error {
 	}
 
 	if isRetry {
+		s.failCertsMu.Lock()
 		delete(s.failCerts, domain)
+		s.failCertsMu.Unlock()
 		log.Info("Successfully obtained certificate (retry)", "domain", d)
 	} else {
 		log.Info("Successfully obtained certificate", "domain", d)
@@ -412,19 +476,26 @@ func (s *Server) setupConfigWatcher() error {
 	s.watcher = watcher
 
 	go func() {
+		var (
+			debounceTimer *time.Timer
+			debounceDur   = 500 * time.Millisecond
+		)
 		for {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
-				// TODO: Editing a file may cause multiple events, can fix it by
-				// https://github.com/abcdlsj/share/blob/master/go/gresh/main.go#L104
 				if event.Name == s.cfgPath && event.Op&fsnotify.Write == fsnotify.Write {
-					log.Info("Config file modified, reloading configuration")
-					if err := s.Reload(); err != nil {
-						log.Error("Failed to reload configuration", "err", err)
+					if debounceTimer != nil {
+						debounceTimer.Stop()
 					}
+					debounceTimer = time.AfterFunc(debounceDur, func() {
+						log.Info("Config file modified, reloading configuration")
+						if err := s.Reload(); err != nil {
+							log.Error("Failed to reload configuration", "err", err)
+						}
+					})
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -463,4 +534,17 @@ func orStr(a, b string) string {
 	}
 
 	return b
+}
+
+func (s *Server) setReady(v bool) {
+	s.mu.Lock()
+	s.ready = v
+	s.mu.Unlock()
+}
+
+func (s *Server) isReady() bool {
+	s.mu.RLock()
+	v := s.ready
+	s.mu.RUnlock()
+	return v
 }
