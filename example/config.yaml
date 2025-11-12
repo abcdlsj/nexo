@@ -8,11 +8,11 @@ cloudflare:
   api_token: your-cloudflare-api-token    # 从 Cloudflare 获取的 API Token
 
 # 通配符域名证书配置
-domains:
-  - example.com                # 将为 *.example.com 申请通配符证书
-  - yourdomain.com             # 将为 *.yourdomain.com 申请通配符证书
+wildcards:
+  - "*.example.com"          # 将为 *.example.com 申请通配符证书
+  - "*.yourdomain.com"       # 将为 *.yourdomain.com 申请通配符证书
 
-# 代理配置
+# 代理配置（静态配置）
 proxies:
   # blog 服务
   blog.example.com:
@@ -34,6 +34,20 @@ proxies:
   test.yourdomain.com:
     upstream: http://localhost:3002
 
-  # 特定域名（在 domains 里查不到，会单独申请证书）
+  # 特定域名（在 wildcards 里查不到，会单独申请证书）
   specific.otherdomain.com:
     upstream: http://localhost:5000
+
+# Docker 自动发现配置（新增）
+docker:
+  enabled: false                     # 是否启用 Docker 自动发现（默认 false）
+  socket: "/var/run/docker.sock"    # Docker socket 路径
+
+# Docker 使用示例：
+# docker run -d \
+#   --name my-api \
+#   --label nexo.domain=api.example.com \
+#   --label nexo.port=8080 \
+#   --label nexo.protocol=http \
+#   --network nexo-network \
+#   my-api:latest
