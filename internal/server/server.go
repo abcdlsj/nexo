@@ -14,6 +14,7 @@ import (
 
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
+	"github.com/abcdlsj/nexo/pkg/docker"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
@@ -57,6 +58,10 @@ type Server struct {
 	// Configuration watcher
 	watcher *fsnotify.Watcher
 	cfgPath string
+
+	// Docker watcher
+	dockerWatcher  *docker.Watcher
+	dynamicProxies map[string]*proxy.Handler
 }
 
 // New creates a new server instance
@@ -76,13 +81,14 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	}
 
 	s := &Server{
-		ctx:       ctx,
-		cancel:    cancel,
-		cfg:       cfg,
-		certm:     m,
-		proxies:   make(map[string]*proxy.Handler),
-		failCerts: make(map[string]time.Time),
-		cfgPath:   cfgPath,
+		ctx:            ctx,
+		cancel:         cancel,
+		cfg:            cfg,
+		certm:          m,
+		proxies:        make(map[string]*proxy.Handler),
+		dynamicProxies: make(map[string]*proxy.Handler),
+		failCerts:      make(map[string]time.Time),
+		cfgPath:        cfgPath,
 	}
 
 	// Start certificate renewal goroutine
@@ -103,6 +109,11 @@ func (s *Server) Start() error {
 	// Setup configuration file watcher
 	if err := s.setupConfigWatcher(); err != nil {
 		log.Error("Failed to setup config watcher", "err", err)
+	}
+
+	// Setup Docker watcher
+	if err := s.setupDockerWatcher(); err != nil {
+		log.Warn("Failed to setup Docker watcher", "err", err)
 	}
 
 	srv := &http.Server{
@@ -187,6 +198,9 @@ func (s *Server) Stop() {
 	if s.watcher != nil {
 		s.watcher.Close()
 	}
+	if s.dockerWatcher != nil {
+		s.dockerWatcher.Stop()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -226,16 +240,29 @@ func (s *Server) extractHost(r *http.Request) string {
 }
 
 func (s *Server) findHandler(host string) *proxy.Handler {
+	// Priority 1: Static configuration
 	s.mu.RLock()
 	h, ok := s.proxies[host]
 	s.mu.RUnlock()
 
-	if !ok {
-		if wild, ok := s.getWildcardDomain(host); ok {
-			s.mu.RLock()
-			h, ok = s.proxies[wild]
-			s.mu.RUnlock()
-		}
+	if ok {
+		return h
+	}
+
+	// Priority 2: Docker dynamic configuration
+	s.mu.RLock()
+	h, ok = s.dynamicProxies[host]
+	s.mu.RUnlock()
+
+	if ok {
+		return h
+	}
+
+	// Priority 3: Wildcard matching
+	if wild, ok := s.getWildcardDomain(host); ok {
+		s.mu.RLock()
+		h, ok = s.proxies[wild]
+		s.mu.RUnlock()
 	}
 
 	return h
@@ -463,4 +490,103 @@ func orStr(a, b string) string {
 	}
 
 	return b
+}
+
+// setupDockerWatcher sets up Docker container watcher for automatic proxy configuration
+func (s *Server) setupDockerWatcher() error {
+	if !s.cfg.Docker.Enabled {
+		log.Info("Docker watcher is disabled")
+		return nil
+	}
+
+	watcher, err := docker.NewWatcher(s.ctx, s.cfg.Docker.Socket)
+	if err != nil {
+		return fmt.Errorf("failed to create Docker watcher: %w", err)
+	}
+
+	// Set container add callback
+	watcher.OnContainerAdd(func(info docker.ContainerInfo) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		// Check for domain conflicts with static configuration
+		if _, exists := s.proxies[info.Domain]; exists {
+			log.Error("Domain conflict detected",
+				"domain", info.Domain,
+				"container", info.Name,
+				"action", "ignoring container config")
+			return fmt.Errorf("domain conflict: %s already configured in static config", info.Domain)
+		}
+
+		// Check for conflicts with other dynamic proxies
+		if _, exists := s.dynamicProxies[info.Domain]; exists {
+			log.Warn("Domain already configured by another container",
+				"domain", info.Domain,
+				"container", info.Name)
+			return fmt.Errorf("domain conflict: %s already configured by another container", info.Domain)
+		}
+
+		// Use the pre-calculated upstream address
+		upstream := info.Upstream
+
+		// Create proxy handler
+		handler := proxy.New(&proxy.Config{
+			Upstream: upstream,
+		}, info.Domain)
+
+		s.dynamicProxies[info.Domain] = handler
+		log.Info("Added dynamic proxy from Docker container",
+			"domain", info.Domain,
+			"upstream", upstream,
+			"container", info.Name)
+
+		// Trigger certificate acquisition (async)
+		go s.ensureCertificate(info.Domain)
+
+		return nil
+	})
+
+	// Set container remove callback
+	watcher.OnContainerRemove(func(domain string) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		if _, exists := s.dynamicProxies[domain]; exists {
+			delete(s.dynamicProxies, domain)
+			log.Info("Removed dynamic proxy for stopped container", "domain", domain)
+		}
+	})
+
+	// Start the watcher
+	if err := watcher.Start(); err != nil {
+		return fmt.Errorf("failed to start Docker watcher: %w", err)
+	}
+
+	s.dockerWatcher = watcher
+	log.Info("Docker watcher started successfully")
+	return nil
+}
+
+// ensureCertificate ensures a certificate exists for the given domain
+func (s *Server) ensureCertificate(domain string) {
+	d := domain
+	if wild, ok := s.getWildcardDomain(domain); ok {
+		d = wild
+	}
+
+	// Check if we already have a valid certificate
+	cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: d})
+	if err == nil && cert != nil && !needsRenewal(cert) {
+		log.Debug("Certificate already exists", "domain", d)
+		return
+	}
+
+	// Obtain certificate
+	log.Info("Obtaining certificate for Docker container", "domain", d)
+	if err := s.certm.ObtainCert(d); err != nil {
+		log.Error("Failed to obtain certificate for Docker container", "domain", d, "error", err)
+		s.addFailedCert(domain, err)
+	} else {
+		log.Info("Successfully obtained certificate for Docker container", "domain", d)
+	}
 }

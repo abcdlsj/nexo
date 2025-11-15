@@ -15,6 +15,7 @@ type Config struct {
 	Cloudflare CloudflareConfig         `mapstructure:"cloudflare"`
 	Wildcards  []string                 `mapstructure:"wildcards"` // Wildcard domains (e.g. *.example.com)
 	Proxies    map[string]*proxy.Config `mapstructure:"proxies"`
+	Docker     DockerConfig             `mapstructure:"docker"`
 	BaseDir    string                   `mapstructure:"base_dir"`
 	CertDir    string                   `mapstructure:"cert_dir"`
 }
@@ -22,6 +23,12 @@ type Config struct {
 // CloudflareConfig represents Cloudflare-specific configuration
 type CloudflareConfig struct {
 	APIToken string `mapstructure:"api_token"`
+}
+
+// DockerConfig represents Docker-specific configuration
+type DockerConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Socket  string `mapstructure:"socket"`
 }
 
 // Load loads the configuration from file
@@ -44,6 +51,8 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("cloudflare:api_token", "")
 	v.SetDefault("wildcards", []string{})
 	v.SetDefault("proxies", map[string]any{})
+	v.SetDefault("docker:enabled", false)
+	v.SetDefault("docker:socket", "/var/run/docker.sock")
 
 	// Determine config directory
 	configDir := "/etc/nexo"
