@@ -1,0 +1,134 @@
+{{template "head" .}}
+<body>
+  {{template "nav" .}}
+  
+  <div class="container">
+    <div class="section-header">
+      <h1>Proxies</h1>
+    </div>
+
+    {{if .Message}}
+    <div class="card mb-4" style="background-color: rgba(34, 197, 94, 0.1); border-color: var(--success);">
+      <p style="color: var(--success); margin: 0;">{{.Message}}</p>
+    </div>
+    {{end}}
+
+    {{if .Error}}
+    <div class="card mb-4" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--destructive);">
+      <p style="color: var(--destructive); margin: 0;">{{.Error}}</p>
+    </div>
+    {{end}}
+
+    <!-- Add Proxy Card -->
+    <div class="card mb-4">
+      <h3 style="margin-bottom: 1rem;">Add New Proxy</h3>
+      <form method="POST" action="/proxies/add">
+        <div class="grid-2">
+          <div class="form-group">
+            <label for="domain">Domain</label>
+            <input type="text" id="domain" name="domain" placeholder="example.com" required style="width: 100%;">
+          </div>
+          <div class="form-group">
+            <label for="type">Type</label>
+            <select id="type" name="type" style="width: 100%;" onchange="toggleType()">
+              <option value="proxy">Proxy</option>
+              <option value="redirect">Redirect</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" id="upstream-group">
+          <label for="upstream">Upstream URL</label>
+          <input type="url" id="upstream" name="upstream" placeholder="http://localhost:8080" style="width: 100%;">
+        </div>
+        <div class="form-group" id="redirect-group" style="display: none;">
+          <label for="redirect">Redirect To</label>
+          <input type="text" id="redirect" name="redirect" placeholder="www.example.com" style="width: 100%;">
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+          <button type="submit" class="btn btn-primary">
+            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Add Proxy
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Proxy List -->
+    {{if eq (len .Proxies) 0}}
+    <div class="card">
+      <div class="empty-state">
+        <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+          <path d="M2 17l10 5 10-5"></path>
+          <path d="M2 12l10 5 10-5"></path>
+        </svg>
+        <p>No proxies configured yet</p>
+        <p class="text-sm text-muted" style="margin-top: 0.5rem;">Use the form above to add your first proxy</p>
+      </div>
+    </div>
+    {{else}}
+    <div class="proxy-list">
+      {{range $domain, $proxy := .Proxies}}
+      <div class="proxy-item">
+        <div class="proxy-info">
+          <div class="proxy-domain">
+            {{$domain}}
+            {{if $proxy.Upstream}}
+            <span class="proxy-type-badge proxy">Proxy</span>
+            {{else}}
+            <span class="proxy-type-badge redirect">Redirect</span>
+            {{end}}
+          </div>
+          <div class="proxy-target">
+            {{if $proxy.Upstream}}
+              → {{$proxy.Upstream}}
+            {{else}}
+              → {{$proxy.Redirect}}
+            {{end}}
+          </div>
+        </div>
+        <div class="proxy-actions">
+          <form method="POST" action="/proxies/delete" onsubmit="return confirm('Delete proxy for {{$domain}}?')" style="display: inline;">
+            <input type="hidden" name="domain" value="{{$domain}}">
+            <button type="submit" class="btn btn-ghost btn-icon" title="Delete">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+
+  <script>
+    function toggleType() {
+      const type = document.getElementById('type').value;
+      const upstreamGroup = document.getElementById('upstream-group');
+      const redirectGroup = document.getElementById('redirect-group');
+      const upstreamInput = document.getElementById('upstream');
+      const redirectInput = document.getElementById('redirect');
+
+      if (type === 'proxy') {
+        upstreamGroup.style.display = 'block';
+        redirectGroup.style.display = 'none';
+        upstreamInput.required = true;
+        redirectInput.required = false;
+        redirectInput.value = '';
+      } else {
+        upstreamGroup.style.display = 'none';
+        redirectGroup.style.display = 'block';
+        upstreamInput.required = false;
+        redirectInput.required = true;
+        upstreamInput.value = '';
+      }
+    }
+  </script>
+</body>
+</html>

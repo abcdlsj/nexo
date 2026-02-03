@@ -1,0 +1,141 @@
+{{template "head" .}}
+<body>
+  {{template "nav" .}}
+  
+  <div class="container">
+    <div class="section-header">
+      <h1>Dashboard</h1>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Proxies</div>
+        <div class="stat-value">{{.Stats.TotalProxies}}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Proxies</div>
+        <div class="stat-value" style="color: var(--success);">{{.Stats.ActiveProxies}}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Redirects</div>
+        <div class="stat-value" style="color: var(--warning);">{{.Stats.RedirectCount}}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Certificates</div>
+        <div class="stat-value">{{.Stats.CertCount}}</div>
+      </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid-2">
+      <!-- Proxy List -->
+      <div>
+        <div class="section-header">
+          <h2>Proxies</h2>
+          <a href="/proxies" class="btn btn-sm btn-secondary">View All</a>
+        </div>
+        
+        {{if eq (len .Proxies) 0}}
+        <div class="card">
+          <div class="empty-state">
+            <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+              <path d="M2 17l10 5 10-5"></path>
+              <path d="M2 12l10 5 10-5"></path>
+            </svg>
+            <p>No proxies configured</p>
+            <p class="text-sm text-muted" style="margin-top: 0.5rem;">Add your first proxy to get started</p>
+          </div>
+        </div>
+        {{else}}
+        <div class="proxy-list">
+          {{range $domain, $proxy := .Proxies}}
+          <div class="proxy-item">
+            <div class="proxy-info">
+              <div class="proxy-domain">
+                {{$domain}}
+                {{if $proxy.Upstream}}
+                <span class="proxy-type-badge proxy">Proxy</span>
+                {{else}}
+                <span class="proxy-type-badge redirect">Redirect</span>
+                {{end}}
+              </div>
+              <div class="proxy-target">
+                {{if $proxy.Upstream}}
+                  → {{$proxy.Upstream}}
+                {{else}}
+                  → {{$proxy.Redirect}}
+                {{end}}
+              </div>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+
+      <!-- Certificate Status -->
+      <div>
+        <div class="section-header">
+          <h2>Certificates</h2>
+          <a href="/certs" class="btn btn-sm btn-secondary">View All</a>
+        </div>
+
+        {{if eq (len .Certs) 0}}
+        <div class="card">
+          <div class="empty-state">
+            <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            <p>No certificates</p>
+            <p class="text-sm text-muted" style="margin-top: 0.5rem;">Certificates will be automatically obtained</p>
+          </div>
+        </div>
+        {{else}}
+        <div class="proxy-list">
+          {{range .Certs}}
+          <div class="proxy-item">
+            <div class="proxy-info">
+              <div class="proxy-domain">
+                {{.Domain}}
+                {{if eq .Status "valid"}}
+                <span class="cert-status valid">
+                  <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  Valid
+                </span>
+                {{else if eq .Status "expiring"}}
+                <span class="cert-status expiring">
+                  <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  </svg>
+                  Expiring
+                </span>
+                {{else}}
+                <span class="cert-status error">
+                  <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                  </svg>
+                  Error
+                </span>
+                {{end}}
+              </div>
+              <div class="proxy-target">
+                Expires: {{.ExpiryDate}}
+              </div>
+            </div>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

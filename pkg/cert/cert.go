@@ -28,6 +28,7 @@ type Config struct {
 	CertDir    string
 	Email      string
 	CFAPIToken string
+	Staging    bool // Use Let's Encrypt staging environment
 }
 
 // Manager handles certificate operations
@@ -45,17 +46,23 @@ func New(cfg Config) (*Manager, error) {
 		return nil, fmt.Errorf("failed to create cert directory: %v", err)
 	}
 
+	m := &Manager{
+		config: cfg,
+		certs:  make(map[string]*tls.Certificate),
+	}
+
+	// If no API token, skip ACME client creation (dev mode)
+	if cfg.CFAPIToken == "" {
+		log.Warn("No Cloudflare API token provided, running in dev mode with self-signed certificates")
+		return m, nil
+	}
+
 	// Create ACME client first
 	c, err := createClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ACME client: %v", err)
 	}
-
-	m := &Manager{
-		config: cfg,
-		certs:  make(map[string]*tls.Certificate),
-		client: c,
-	}
+	m.client = c
 
 	// Load existing certificates from disk
 	if err := m.loadCerts(); err != nil {
@@ -79,7 +86,12 @@ func createClient(cfg Config) (*lego.Client, error) {
 	}
 
 	c := lego.NewConfig(u)
-	c.CADirURL = lego.LEDirectoryProduction
+	if cfg.Staging {
+		c.CADirURL = lego.LEDirectoryStaging
+		log.Info("Using Let's Encrypt staging environment")
+	} else {
+		c.CADirURL = lego.LEDirectoryProduction
+	}
 	c.Certificate.KeyType = certcrypto.RSA2048
 
 	client, err := lego.NewClient(c)
@@ -185,6 +197,12 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 // ObtainCert obtains a new certificate for the given domain
 func (m *Manager) ObtainCert(domain string) error {
+	// Skip if no ACME client (dev mode)
+	if m.client == nil {
+		log.Warn("Skipping certificate obtain in dev mode", "domain", domain)
+		return nil
+	}
+
 	req := certificate.ObtainRequest{
 		Domains: []string{domain},
 		Bundle:  true,

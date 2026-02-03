@@ -1,0 +1,121 @@
+{{template "head" .}}
+<body>
+  {{template "nav" .}}
+  
+  <div class="container">
+    <div class="section-header">
+      <h1>Configuration</h1>
+    </div>
+
+    {{if .Message}}
+    <div class="card mb-4" style="background-color: rgba(34, 197, 94, 0.1); border-color: var(--success);">
+      <p style="color: var(--success); margin: 0;">{{.Message}}</p>
+    </div>
+    {{end}}
+
+    {{if .Error}}
+    <div class="card mb-4" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--destructive);">
+      <p style="color: var(--destructive); margin: 0;">{{.Error}}</p>
+    </div>
+    {{end}}
+
+    <div class="grid-2">
+      <!-- Basic Settings -->
+      <div class="card">
+        <h3 style="margin-bottom: 1rem;">Basic Settings</h3>
+        <form method="POST" action="/config/update">
+          <input type="hidden" name="section" value="basic">
+          <div class="form-group">
+            <label for="email">Email (for Let's Encrypt)</label>
+            <input type="email" id="email" name="email" value="{{.Config.Email}}" required style="width: 100%;">
+          </div>
+          <div class="form-group">
+            <label for="base_dir">Base Directory</label>
+            <input type="text" id="base_dir" name="base_dir" value="{{.Config.BaseDir}}" readonly style="width: 100%; background-color: var(--muted);">
+          </div>
+          <div class="form-group">
+            <label for="cert_dir">Certificate Directory</label>
+            <input type="text" id="cert_dir" name="cert_dir" value="{{.Config.CertDir}}" readonly style="width: 100%; background-color: var(--muted);">
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            Save Settings
+          </button>
+        </form>
+      </div>
+
+      <!-- Cloudflare Settings -->
+      <div class="card">
+        <h3 style="margin-bottom: 1rem;">Cloudflare Settings</h3>
+        <form method="POST" action="/config/update">
+          <input type="hidden" name="section" value="cloudflare">
+          <div class="form-group">
+            <label for="api_token">API Token</label>
+            <input type="password" id="api_token" name="api_token" value="{{.Config.Cloudflare.APIToken}}" placeholder="Your Cloudflare API Token" style="width: 100%;">
+            <p class="text-sm text-muted" style="margin-top: 0.25rem;">Required permissions: Zone - DNS - Edit, Zone - Zone - Read</p>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            Save Settings
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Wildcard Domains -->
+    <div class="card mt-4">
+      <h3 style="margin-bottom: 1rem;">Wildcard Domains</h3>
+      <form method="POST" action="/config/wildcard/add" style="margin-bottom: 1rem;">
+        <div class="form-container">
+          <input type="text" name="wildcard" placeholder="*.example.com" required style="min-width: 250px;">
+          <button type="submit" class="btn btn-primary btn-sm">
+            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Add Wildcard
+          </button>
+        </div>
+      </form>
+      
+      {{if eq (len .Config.Wildcards) 0}}
+      <p class="text-muted">No wildcard domains configured</p>
+      {{else}}
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+        {{range .Config.Wildcards}}
+        <form method="POST" action="/config/wildcard/delete" style="display: inline;">
+          <input type="hidden" name="wildcard" value="{{.}}">
+          <button type="submit" class="btn btn-sm btn-secondary" style="display: inline-flex; align-items: center; gap: 0.375rem;">
+            {{.}}
+            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+
+    <!-- Raw Config -->
+    <div class="card mt-4">
+      <div class="card-header">
+        <div>
+          <h3 class="card-title">Configuration File</h3>
+          <p class="card-subtitle">Raw YAML configuration</p>
+        </div>
+      </div>
+      <pre style="background-color: var(--muted); padding: 1rem; border-radius: var(--radius); overflow-x: auto; font-size: 0.8125rem;"><code>{{.RawConfig}}</code></pre>
+    </div>
+  </div>
+</body>
+</html>

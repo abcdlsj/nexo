@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/abcdlsj/nexo/pkg/proxy"
+	"github.com/charmbracelet/log"
 	"github.com/spf13/viper"
 )
 
@@ -17,6 +18,8 @@ type Config struct {
 	Proxies    map[string]*proxy.Config `mapstructure:"proxies"`
 	BaseDir    string                   `mapstructure:"base_dir"`
 	CertDir    string                   `mapstructure:"cert_dir"`
+	WebUIPort  string                   `mapstructure:"webui_port"` // WebUI port (default: 8080)
+	Staging    bool                     `mapstructure:"staging"`    // Use Let's Encrypt staging environment
 }
 
 // CloudflareConfig represents Cloudflare-specific configuration
@@ -91,9 +94,10 @@ func Load(cfgFile string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %v", err)
 	}
 
-	// Validate required configuration
+	// Note: Cloudflare API token is required for production use
+	// but we allow it to be empty for local development/testing
 	if cfg.Cloudflare.APIToken == "" {
-		return nil, fmt.Errorf("cloudflare API token not configured")
+		log.Warn("Cloudflare API token not configured - running in dev mode (no automatic certificates)")
 	}
 
 	return &cfg, nil

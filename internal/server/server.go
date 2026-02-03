@@ -2,16 +2,25 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/abcdlsj/nexo/internal/webui"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
@@ -40,7 +49,6 @@ const (
 	renewalThreshold = 30 * 24 * time.Hour
 )
 
-// Server represents the HTTPS proxy server
 type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -54,12 +62,10 @@ type Server struct {
 
 	mu sync.RWMutex
 
-	// Configuration watcher
 	watcher *fsnotify.Watcher
 	cfgPath string
 }
 
-// New creates a new server instance
 func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -67,6 +73,7 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		CertDir:    cfg.CertDir,
 		Email:      cfg.Email,
 		CFAPIToken: cfg.Cloudflare.APIToken,
+		Staging:    cfg.Staging,
 	}
 
 	m, err := cert.New(certCfg)
@@ -85,25 +92,24 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		cfgPath:   cfgPath,
 	}
 
-	// Start certificate renewal goroutine
 	go s.renewCerts()
-
-	// Start retry failed certificates goroutine
 	go s.retryCerts()
 
 	return s, nil
 }
 
-// Start starts the HTTPS server
+// Start starts the HTTPS server and WebUI
 func (s *Server) Start() error {
 	if err := s.loadProxies(false); err != nil {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
 
-	// Setup configuration file watcher
 	if err := s.setupConfigWatcher(); err != nil {
 		log.Error("Failed to setup config watcher", "err", err)
 	}
+
+	// Start WebUI server
+	go s.startWebUI()
 
 	srv := &http.Server{
 		Addr:              ":443",
@@ -122,6 +128,35 @@ func (s *Server) Start() error {
 	}
 
 	return srv.Serve(ln)
+}
+
+// startWebUI starts the WebUI server
+func (s *Server) startWebUI() {
+	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.proxies, func() error {
+		return s.Reload()
+	})
+	mux := http.NewServeMux()
+	webuiHandler.RegisterRoutes(mux)
+
+	webuiPort := ":8080"
+	if s.cfg.WebUIPort != "" {
+		webuiPort = ":" + s.cfg.WebUIPort
+	}
+
+	log.Info("Starting WebUI", "addr", webuiPort)
+
+	srv := &http.Server{
+		Addr:              webuiPort,
+		Handler:           mux,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
+		log.Error("WebUI server error", "err", err)
+	}
 }
 
 // getWildcardDomain returns the wildcard domain if the domain is eligible
@@ -157,6 +192,12 @@ func (s *Server) createTLSConfig() *tls.Config {
 			}
 		}
 
+		// In dev mode, generate self-signed certificate
+		if s.cfg.Cloudflare.APIToken == "" {
+			log.Warn("Using self-signed certificate for domain", "domain", domain)
+			return s.generateSelfSignedCert(domain)
+		}
+
 		return nil, fmt.Errorf("no certificate found for domain: %s", domain)
 	}
 
@@ -170,6 +211,82 @@ func (s *Server) createTLSConfig() *tls.Config {
 			}, nil
 		},
 	}
+}
+
+// generateSelfSignedCert generates a self-signed certificate for development
+func (s *Server) generateSelfSignedCert(domain string) (*tls.Certificate, error) {
+	// Check if we already have a cached self-signed cert for this domain
+	certPath := filepath.Join(s.cfg.CertDir, domain+"-dev.crt")
+	keyPath := filepath.Join(s.cfg.CertDir, domain+"-dev.key")
+
+	// Try to load existing cert
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			certPEM, _ := os.ReadFile(certPath)
+			keyPEM, _ := os.ReadFile(keyPath)
+			cert, err := tls.X509KeyPair(certPEM, keyPEM)
+			if err == nil {
+				return &cert, nil
+			}
+		}
+	}
+
+	// Generate new self-signed certificate
+	return s.createSelfSignedCert(domain, certPath, keyPath)
+}
+
+func (s *Server) createSelfSignedCert(domain, certPath, keyPath string) (*tls.Certificate, error) {
+	// Generate private key
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create certificate template
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Organization: []string{"Nexo Dev"},
+			CommonName:   domain,
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{domain, "*." + domain},
+	}
+
+	// Generate certificate
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encode certificate
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	// Encode private key
+	privBytes, err := x509.MarshalECPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes})
+
+	// Save to disk
+	if err := os.WriteFile(certPath, certPEM, 0600); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		return nil, err
+	}
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cert, nil
 }
 
 func (s *Server) createListener() (net.Listener, error) {
@@ -418,8 +535,6 @@ func (s *Server) setupConfigWatcher() error {
 				if !ok {
 					return
 				}
-				// TODO: Editing a file may cause multiple events, can fix it by
-				// https://github.com/abcdlsj/share/blob/master/go/gresh/main.go#L104
 				if event.Name == s.cfgPath && event.Op&fsnotify.Write == fsnotify.Write {
 					log.Info("Config file modified, reloading configuration")
 					if err := s.Reload(); err != nil {
@@ -437,7 +552,6 @@ func (s *Server) setupConfigWatcher() error {
 		}
 	}()
 
-	// Watch the config directory
 	if s.cfgPath != "" {
 		return watcher.Add(filepath.Dir(s.cfgPath))
 	}
@@ -454,7 +568,10 @@ func (s *Server) Reload() error {
 	}
 
 	s.cfg = newCfg
-	return s.loadProxies(true)
+	if err := s.loadProxies(true); err != nil {
+		return fmt.Errorf("failed to load proxies: %v", err)
+	}
+	return nil
 }
 
 func orStr(a, b string) string {

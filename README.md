@@ -10,6 +10,7 @@ A simple HTTPS reverse proxy with automatic certificate management using Cloudfl
 - Support for both proxy and redirect configurations
 - Automatic certificate renewal (30 days before expiration)
 - Dynamic configuration through YAML
+- **Web UI** - Modern, responsive web interface for managing proxies and certificates
 - Docker support
 
 ## Prerequisites
@@ -55,6 +56,7 @@ Create or edit `/etc/nexo/config.yaml` (or `~/.nexo/config.yaml` for non-root us
 base_dir: /etc/nexo          # Default config directory
 cert_dir: /etc/nexo/certs    # Default certificate directory
 email: your-email@example.com
+webui_port: 8080             # WebUI port (default: 8080)
 
 # Cloudflare settings
 cloudflare:
@@ -110,6 +112,66 @@ Start the server (requires root privileges for port 443):
 sudo nexo server
 ```
 
+### Quick Start (Local Development)
+
+1. **Create a simple config file:**
+```bash
+mkdir -p ~/nexo-dev
+cat > ~/nexo-dev/config.yaml << 'EOF'
+email: dev@localhost
+base_dir: ~/nexo-dev
+cert_dir: ~/nexo-dev/certs
+webui_port: 8080
+
+cloudflare:
+  api_token: ""  # Empty for dev mode (self-signed certs)
+
+proxies:
+  "app.localhost":
+    upstream: http://localhost:3000
+EOF
+```
+
+2. **Add hosts entries:**
+```bash
+echo "127.0.0.1 app.localhost" | sudo tee -a /etc/hosts
+```
+
+3. **Run nexo:**
+```bash
+sudo nexo --config ~/nexo-dev/config.yaml
+```
+
+4. **Access WebUI:**
+Open http://localhost:8080 in your browser.
+
+For more details, see [LOCAL_DEV.md](LOCAL_DEV.md).
+
+### Web UI
+
+Nexo includes a modern web interface for managing your reverse proxy configuration. The WebUI is automatically started on port 8080 (configurable via `webui_port`).
+
+**Features:**
+- **Dashboard** - Overview of all proxies and certificates with statistics
+- **Proxies** - Add, view, and delete proxy/redirect configurations
+- **Certificates** - Monitor certificate status and manually trigger renewal
+- **Config** - Update email, Cloudflare API token, and wildcard domains
+
+**Access the WebUI:**
+```
+http://localhost:8080
+```
+
+When using Docker, remember to expose the WebUI port:
+```bash
+docker run -d \
+  --name nexo \
+  -p 443:443 \
+  -p 8080:8080 \
+  -v /etc/nexo:/etc/nexo \
+  ghcr.io/abcdlsj/nexo:latest
+```
+
 ## Notes
 
 - Certificates are automatically obtained and renewed
@@ -123,7 +185,8 @@ sudo nexo server
 ```
 nexo/
 ├── internal/
-│   └── server/      # Core server implementation
+│   ├── server/      # Core server implementation
+│   └── webui/       # Web UI (templates and handlers)
 └── pkg/
     ├── cert/        # Certificate management
     ├── config/      # Configuration handling
