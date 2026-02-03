@@ -359,14 +359,18 @@ func (s *Server) findHandler(host string) *proxy.Handler {
 }
 
 func (s *Server) loadProxies(reload bool) error {
+	if !reload {
+		return s.loadAllProxies()
+	}
+	return s.loadProxiesIncremental()
+}
+
+func (s *Server) loadAllProxies() error {
 	new := make(map[string]*proxy.Handler)
 
 	for d, cfg := range s.cfg.Proxies {
 		if err := s.setupProxy(d, cfg, new); err != nil {
-			if !reload {
-				continue
-			}
-			return err
+			continue
 		}
 	}
 
@@ -375,6 +379,98 @@ func (s *Server) loadProxies(reload bool) error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+func (s *Server) loadProxiesIncremental() error {
+	s.mu.RLock()
+	currentDomains := make(map[string]bool)
+	for d := range s.proxies {
+		currentDomains[d] = true
+	}
+	s.mu.RUnlock()
+
+	newDomains := make(map[string]bool)
+	for d := range s.cfg.Proxies {
+		newDomains[d] = true
+	}
+
+	var added, updated, removed int
+
+	for d, cfg := range s.cfg.Proxies {
+		if !currentDomains[d] {
+			handler, err := s.createProxyHandler(d, cfg)
+			if err != nil {
+				log.Error("Failed to add proxy", "domain", d, "err", err)
+				continue
+			}
+			s.mu.Lock()
+			s.proxies[d] = handler
+			s.mu.Unlock()
+			added++
+			log.Info("Proxy added", "domain", d)
+		} else if s.proxyConfigChanged(d, cfg) {
+			handler, err := s.createProxyHandler(d, cfg)
+			if err != nil {
+				log.Error("Failed to update proxy", "domain", d, "err", err)
+				continue
+			}
+			s.mu.Lock()
+			s.proxies[d] = handler
+			s.mu.Unlock()
+			updated++
+			log.Info("Proxy updated", "domain", d)
+		}
+	}
+
+	s.mu.Lock()
+	for d := range currentDomains {
+		if !newDomains[d] {
+			delete(s.proxies, d)
+			removed++
+			log.Info("Proxy removed", "domain", d)
+		}
+	}
+	s.mu.Unlock()
+
+	log.Info("Incremental reload completed", "added", added, "updated", updated, "removed", removed)
+	return nil
+}
+
+func (s *Server) proxyConfigChanged(domain string, newCfg *proxy.Config) bool {
+	s.mu.RLock()
+	oldHandler, ok := s.proxies[domain]
+	s.mu.RUnlock()
+	if !ok {
+		return true
+	}
+	return oldHandler.ConfigChanged(newCfg)
+}
+
+func (s *Server) createProxyHandler(domain string, cfg *proxy.Config) (*proxy.Handler, error) {
+	if cfg.Redirect == "" && cfg.Upstream == "" {
+		return nil, fmt.Errorf("either upstream or redirect must be configured for domain %s", domain)
+	}
+
+	target := proxy.EnsureSchema(orStr(cfg.Redirect, cfg.Upstream))
+
+	u, err := url.Parse(target)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing upstream URL for %s: %v", domain, err)
+	}
+
+	if err := proxy.CheckTarget(u); err != nil {
+		return nil, fmt.Errorf("upstream not accessible for %s: %v", domain, err)
+	}
+
+	if err := s.handleCertObtain(domain, false); err != nil {
+		return nil, err
+	}
+
+	handler := proxy.New(cfg, domain)
+	if handler == nil {
+		return nil, fmt.Errorf("failed to create proxy handler for domain %s", domain)
+	}
+	return handler, nil
 }
 
 func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string]*proxy.Handler) error {

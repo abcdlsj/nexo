@@ -33,7 +33,16 @@ type Config struct {
 type Handler struct {
 	proxy    *httputil.ReverseProxy
 	redirect string
+	upstream string
 	host     string
+}
+
+// ConfigChanged checks if the configuration has changed
+func (h *Handler) ConfigChanged(newCfg *Config) bool {
+	if h.redirect != "" {
+		return h.redirect != newCfg.Redirect
+	}
+	return h.upstream != newCfg.Upstream
 }
 
 // New creates a new proxy handler
@@ -57,8 +66,9 @@ func New(cfg *Config, host string) *Handler {
 	p.ErrorHandler = createErrorHandler(host)
 
 	return &Handler{
-		proxy: p,
-		host:  host,
+		proxy:    p,
+		upstream: cfg.Upstream,
+		host:     host,
 	}
 }
 
