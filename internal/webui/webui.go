@@ -1,14 +1,19 @@
 package webui
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"embed"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"html/template"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +21,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,17 +52,164 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, proxies map[
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/", h.handleDashboard)
-	mux.HandleFunc("/proxies", h.handleProxies)
-	mux.HandleFunc("/proxies/add", h.handleAddProxy)
-	mux.HandleFunc("/proxies/delete", h.handleDeleteProxy)
-	mux.HandleFunc("/certs", h.handleCerts)
-	mux.HandleFunc("/certs/renew", h.handleRenewCert)
-	mux.HandleFunc("/config", h.handleConfig)
-	mux.HandleFunc("/config/update", h.handleUpdateConfig)
-	mux.HandleFunc("/config/wildcard/add", h.handleAddWildcard)
-	mux.HandleFunc("/config/wildcard/delete", h.handleDeleteWildcard)
+	// Public routes
+	mux.HandleFunc("/login", h.handleLogin)
+	mux.HandleFunc("/logout", h.handleLogout)
 	mux.HandleFunc("/favicon.ico", h.handleFavicon)
+
+	// Protected routes - wrap with auth middleware
+	mux.HandleFunc("/", h.authMiddleware(h.handleDashboard))
+	mux.HandleFunc("/proxies", h.authMiddleware(h.handleProxies))
+	mux.HandleFunc("/proxies/add", h.authMiddleware(h.handleAddProxy))
+	mux.HandleFunc("/proxies/delete", h.authMiddleware(h.handleDeleteProxy))
+	mux.HandleFunc("/certs", h.authMiddleware(h.handleCerts))
+	mux.HandleFunc("/certs/renew", h.authMiddleware(h.handleRenewCert))
+	mux.HandleFunc("/config", h.authMiddleware(h.handleConfig))
+	mux.HandleFunc("/config/update", h.authMiddleware(h.handleUpdateConfig))
+	mux.HandleFunc("/config/wildcard/add", h.authMiddleware(h.handleAddWildcard))
+	mux.HandleFunc("/config/wildcard/delete", h.authMiddleware(h.handleDeleteWildcard))
+}
+
+// authMiddleware checks if user is authenticated
+func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// If no password is configured, allow access
+		if h.cfg.WebUI.Password == "" {
+			next(w, r)
+			return
+		}
+
+		// Check session cookie
+		cookie, err := r.Cookie("nexo_session")
+		if err != nil || !h.validateSession(cookie.Value) {
+			// Redirect to login
+			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusSeeOther)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// validateSession validates the session token using HMAC
+func (h *Handler) validateSession(token string) bool {
+	if h.cfg.WebUI.Password == "" {
+		return false
+	}
+	// Token format: timestamp:signature
+	parts := strings.Split(token, ":")
+	if len(parts) != 2 {
+		return false
+	}
+
+	timestamp := parts[0]
+	signature := parts[1]
+
+	// Check if timestamp is within 24 hours
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	if time.Now().Unix()-ts > 86400 {
+		return false
+	}
+
+	// Verify HMAC signature using password as key
+	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac.Write([]byte(timestamp))
+	expectedSig := hex.EncodeToString(mac.Sum(nil))
+
+	return subtle.ConstantTimeCompare([]byte(signature), []byte(expectedSig)) == 1
+}
+
+// generateSessionToken generates a new signed session token
+func (h *Handler) generateSessionToken() string {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac.Write([]byte(timestamp))
+	signature := hex.EncodeToString(mac.Sum(nil))
+	return timestamp + ":" + signature
+}
+
+// handleLogin handles login page and form submission
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// If no password is configured, redirect to home
+	if h.cfg.WebUI.Password == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	data := struct {
+		PageData
+		Error    string
+		Redirect string
+	}{
+		PageData: PageData{
+			ActiveNav: "",
+			Config:    h.cfg,
+		},
+		Redirect: r.URL.Query().Get("redirect"),
+	}
+
+	if r.Method == http.MethodPost {
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+		redirect := r.FormValue("redirect")
+		if redirect == "" {
+			redirect = "/"
+		}
+
+		// Validate credentials
+		if h.validateCredentials(username, password) {
+			// Set session cookie with signed token
+			http.SetCookie(w, &http.Cookie{
+				Name:     "nexo_session",
+				Value:    h.generateSessionToken(),
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+				MaxAge:   86400, // 24 hours
+			})
+			http.Redirect(w, r, redirect, http.StatusSeeOther)
+			return
+		}
+
+		data.Error = "Invalid username or password"
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+		log.Error("Failed to render login", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// validateCredentials validates username and password
+func (h *Handler) validateCredentials(username, password string) bool {
+	// Check username
+	expectedUsername := h.cfg.WebUI.Username
+	if expectedUsername == "" {
+		expectedUsername = "admin"
+	}
+	if subtle.ConstantTimeCompare([]byte(username), []byte(expectedUsername)) != 1 {
+		return false
+	}
+
+	// Check password using bcrypt
+	err := bcrypt.CompareHashAndPassword([]byte(h.cfg.WebUI.Password), []byte(password))
+	return err == nil
+}
+
+// handleLogout handles logout
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "nexo_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 type PageData struct {
@@ -398,13 +551,38 @@ func (h *Handler) getCertForDomain(domain string) CertInfo {
 		Status: "error",
 	}
 
-	certFile := filepath.Join(h.cfg.CertDir, domain+".crt")
-	keyFile := filepath.Join(h.cfg.CertDir, domain+".key")
-
+	// For wildcard domains like *.example.com, look for example.com.crt
 	if strings.HasPrefix(domain, "*.") {
 		baseDomain := domain[2:]
+		certFile := filepath.Join(h.cfg.CertDir, baseDomain+".crt")
+		keyFile := filepath.Join(h.cfg.CertDir, baseDomain+".key")
+		return h.readCertInfo(domain, certFile, keyFile)
+	}
+
+	// For regular domains, first try exact match
+	certFile := filepath.Join(h.cfg.CertDir, domain+".crt")
+	keyFile := filepath.Join(h.cfg.CertDir, domain+".key")
+	if _, err := os.Stat(certFile); err == nil {
+		return h.readCertInfo(domain, certFile, keyFile)
+	}
+
+	// If no exact match, try wildcard match using config method
+	if wild, ok := h.cfg.GetWildcardDomain(domain); ok {
+		baseDomain := wild[2:] // Remove "*." prefix
 		certFile = filepath.Join(h.cfg.CertDir, baseDomain+".crt")
 		keyFile = filepath.Join(h.cfg.CertDir, baseDomain+".key")
+		if _, err := os.Stat(certFile); err == nil {
+			return h.readCertInfo(domain, certFile, keyFile)
+		}
+	}
+
+	return info
+}
+
+func (h *Handler) readCertInfo(domain, certFile, keyFile string) CertInfo {
+	info := CertInfo{
+		Domain: domain,
+		Status: "error",
 	}
 
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {

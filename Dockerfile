@@ -34,8 +34,8 @@ COPY example/config.yaml /etc/nexo/config.yaml
 # Create volume for persistent config
 VOLUME ["/etc/nexo"]
 
-# Expose HTTPS port
-EXPOSE 443
+# Expose HTTPS port and WebUI port
+EXPOSE 443 8080
 
 # Run the application
 ENTRYPOINT ["/app/nexo", "server"] 

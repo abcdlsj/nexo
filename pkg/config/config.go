@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
@@ -18,8 +19,15 @@ type Config struct {
 	Proxies    map[string]*proxy.Config `mapstructure:"proxies"`
 	BaseDir    string                   `mapstructure:"base_dir"`
 	CertDir    string                   `mapstructure:"cert_dir"`
-	WebUIPort  string                   `mapstructure:"webui_port"` // WebUI port (default: 8080)
-	Staging    bool                     `mapstructure:"staging"`    // Use Let's Encrypt staging environment
+	WebUI      WebUIConfig              `mapstructure:"webui"`
+	Staging    bool                     `mapstructure:"staging"` // Use Let's Encrypt staging environment
+}
+
+// WebUIConfig represents WebUI-specific configuration
+type WebUIConfig struct {
+	Port     string `mapstructure:"port"`     // WebUI port (default: 8080)
+	Username string `mapstructure:"username"` // WebUI login username
+	Password string `mapstructure:"password"` // WebUI login password (bcrypt hashed)
 }
 
 // CloudflareConfig represents Cloudflare-specific configuration
@@ -106,4 +114,22 @@ func Load(cfgFile string) (*Config, error) {
 // Save saves the configuration to file
 func Save(v *viper.Viper) error {
 	return v.WriteConfig()
+}
+
+// GetWildcardDomain checks if a domain matches any configured wildcard domain
+// Returns the wildcard domain (e.g., *.example.com) and true if matched
+func (c *Config) GetWildcardDomain(domain string) (string, bool) {
+	parts := strings.SplitN(domain, ".", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+
+	wd := "*." + parts[1]
+	for _, d := range c.Wildcards {
+		if d == wd {
+			return d, true
+		}
+	}
+
+	return "", false
 }

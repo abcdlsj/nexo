@@ -139,8 +139,8 @@ func (s *Server) startWebUI() {
 	webuiHandler.RegisterRoutes(mux)
 
 	webuiPort := ":8080"
-	if s.cfg.WebUIPort != "" {
-		webuiPort = ":" + s.cfg.WebUIPort
+	if s.cfg.WebUI.Port != "" {
+		webuiPort = ":" + s.cfg.WebUI.Port
 	}
 
 	log.Info("Starting WebUI", "addr", webuiPort)
@@ -159,23 +159,6 @@ func (s *Server) startWebUI() {
 	}
 }
 
-// getWildcardDomain returns the wildcard domain if the domain is eligible
-func (s *Server) getWildcardDomain(domain string) (string, bool) {
-	parts := strings.SplitN(domain, ".", 2)
-	if len(parts) != 2 {
-		return "", false
-	}
-
-	wd := "*." + parts[1]
-	for _, d := range s.cfg.Wildcards {
-		if d == wd {
-			return d, true
-		}
-	}
-
-	return "", false
-}
-
 func (s *Server) createTLSConfig() *tls.Config {
 	getCert := func(domain string) (*tls.Certificate, error) {
 		// Try exact domain first
@@ -185,7 +168,7 @@ func (s *Server) createTLSConfig() *tls.Config {
 		}
 
 		// Try wildcard domain if available
-		if wild, ok := s.getWildcardDomain(domain); ok {
+		if wild, ok := s.cfg.GetWildcardDomain(domain); ok {
 			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wild})
 			if err == nil {
 				return cert, nil
@@ -348,7 +331,7 @@ func (s *Server) findHandler(host string) *proxy.Handler {
 	s.mu.RUnlock()
 
 	if !ok {
-		if wild, ok := s.getWildcardDomain(host); ok {
+		if wild, ok := s.cfg.GetWildcardDomain(host); ok {
 			s.mu.RLock()
 			h, ok = s.proxies[wild]
 			s.mu.RUnlock()
@@ -500,7 +483,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 // handleCertObtain handles certificate obtaining with proper error handling and logging
 func (s *Server) handleCertObtain(domain string, isRetry bool) error {
 	d := domain
-	if wild, ok := s.getWildcardDomain(domain); ok {
+	if wild, ok := s.cfg.GetWildcardDomain(domain); ok {
 		d = wild
 	}
 
