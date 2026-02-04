@@ -34,7 +34,9 @@ var (
 	//go:embed tmpl/*.ico
 	tmplFS embed.FS
 
-	tmpl = template.Must(template.New("").ParseFS(tmplFS, "tmpl/*.html"))
+	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
+		"hasPrefix": strings.HasPrefix,
+	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
 
 type Handler struct {
