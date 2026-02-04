@@ -39,13 +39,13 @@
     </div>
     {{else}}
     <div class="proxy-list">
-      <!-- 先显示 Wildcard 域名证书及其子域名 -->
+      <!-- Display wildcard domain certificates and their subdomains -->
       {{range .Wildcards}}
         {{$wildcard := .}}
         {{$baseDomain := slice . 2}}
         {{range $.Certs}}
           {{if eq .Domain $wildcard}}
-            <!-- Wildcard 域名本身的证书 -->
+            <!-- Wildcard domain certificate -->
             <div class="proxy-item cert-wildcard">
               <div class="proxy-info">
                 <div class="proxy-domain">
@@ -103,7 +103,7 @@
           {{end}}
         {{end}}
         
-        <!-- 显示使用该 wildcard 的子域名证书 -->
+        <!-- Subdomain certificates using this wildcard -->
         {{range $.Certs}}
           {{if and .UsesWildcard (eq .WildcardDomain $wildcard) (ne .Domain $wildcard)}}
             <div class="proxy-item cert-wildcard-child">
@@ -163,7 +163,7 @@
         {{end}}
       {{end}}
       
-      <!-- 显示独立的普通域名证书（不使用 wildcard 的） -->
+      <!-- Standalone domain certificates (not using wildcard) -->
       {{range .Certs}}
         {{if not .UsesWildcard}}
           {{$isWildcard := hasPrefix .Domain "*."}}

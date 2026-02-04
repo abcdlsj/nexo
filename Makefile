@@ -1,4 +1,4 @@
-.PHONY: build run clean test password
+.PHONY: build run clean test password secret-key
 
 # Build the application
 build:
@@ -25,3 +25,8 @@ password:
 	fi
 	@htpasswd -bnBC 10 "" "$(PASSWORD)" | tr -d ':\n'
 	@echo ""
+
+# Generate secret key for OAuth session signing
+# Usage: make secret-key
+secret-key:
+	@openssl rand -base64 32

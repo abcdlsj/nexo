@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -21,11 +22,13 @@ import (
 	"time"
 
 	"github.com/abcdlsj/nexo/internal/webui"
+	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -55,6 +58,7 @@ type Server struct {
 
 	cfg     *config.Config
 	certm   *cert.Manager
+	authm   *auth.Manager
 	proxies map[string]*proxy.Handler
 
 	failCerts   map[string]time.Time
@@ -82,11 +86,57 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		return nil, fmt.Errorf("failed to create certificate manager: %v", err)
 	}
 
+	// Initialize auth manager
+	var authm *auth.Manager
+	if cfg.Auth.GitHub.ClientID != "" {
+		sessionTTL := 24 * time.Hour
+		if cfg.Auth.SessionTTL != "" {
+			if d, err := time.ParseDuration(cfg.Auth.SessionTTL); err == nil {
+				sessionTTL = d
+			}
+		}
+
+		// Ensure secret_key is set
+		secretKey := cfg.Auth.SecretKey
+		if secretKey == "" {
+			secretKey = generateSecretKey()
+			cfg.Auth.SecretKey = secretKey
+			if err := saveConfig(cfg, cfgPath); err != nil {
+				log.Warn("Failed to save generated secret_key", "err", err)
+			} else {
+				log.Info("Generated and saved secret_key to config")
+			}
+		}
+
+		// Collect all proxy domains as allowed redirect hosts
+		allowedHosts := make([]string, 0, len(cfg.Proxies))
+		for domain := range cfg.Proxies {
+			allowedHosts = append(allowedHosts, domain)
+		}
+
+		authm = auth.New(auth.Config{
+			GitHub: auth.GitHubConfig{
+				ClientID:     cfg.Auth.GitHub.ClientID,
+				ClientSecret: cfg.Auth.GitHub.ClientSecret,
+				AllowedUsers: cfg.Auth.GitHub.AllowedUsers,
+			},
+			AuthHost:     cfg.Auth.AuthHost,
+			SecretKey:    secretKey,
+			SessionTTL:   sessionTTL,
+			AllowedHosts: allowedHosts,
+		})
+
+		if authm.Enabled() {
+			log.Info("OAuth authentication enabled", "auth_host", cfg.Auth.AuthHost)
+		}
+	}
+
 	s := &Server{
 		ctx:       ctx,
 		cancel:    cancel,
 		cfg:       cfg,
 		certm:     m,
+		authm:     authm,
 		proxies:   make(map[string]*proxy.Handler),
 		failCerts: make(map[string]time.Time),
 		cfgPath:   cfgPath,
@@ -132,7 +182,7 @@ func (s *Server) Start() error {
 
 // startWebUI starts the WebUI server
 func (s *Server) startWebUI() {
-	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.proxies, func() error {
+	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.authm, s.proxies, func() error {
 		return s.Reload()
 	})
 	mux := http.NewServeMux()
@@ -302,10 +352,32 @@ func (s *Server) handleHTTPS() http.Handler {
 			return
 		}
 
-		h := s.findHandler(host)
+		// Handle OAuth2 routes if auth is enabled
+		if s.authm != nil && s.authm.Enabled() && strings.HasPrefix(r.URL.Path, "/oauth2/") {
+			if s.authm.HandleOAuth2(w, r, host) {
+				return
+			}
+		}
+
+		h, cfg := s.findHandlerWithConfig(host)
 		if h == nil {
 			http.Error(w, "Domain not configured", http.StatusNotFound)
 			return
+		}
+
+		// Check authentication if required
+		if cfg != nil && cfg.Auth && s.authm != nil && s.authm.Enabled() {
+			result := s.authm.CheckAuth(r)
+			if result.User == "" {
+				s.authm.RedirectToAuth(w, r, host)
+				return
+			}
+			// Refresh session if needed (silent renewal)
+			if result.NeedRefresh {
+				s.authm.RefreshSession(w, result.User)
+			}
+			// Add user info to request headers for upstream
+			r.Header.Set("X-Auth-User", result.User)
 		}
 
 		h.ServeHTTP(w, r)
@@ -325,20 +397,25 @@ func (s *Server) extractHost(r *http.Request) string {
 	return host
 }
 
-func (s *Server) findHandler(host string) *proxy.Handler {
+func (s *Server) findHandlerWithConfig(host string) (*proxy.Handler, *proxy.Config) {
 	s.mu.RLock()
 	h, ok := s.proxies[host]
 	s.mu.RUnlock()
 
-	if !ok {
-		if wild, ok := s.cfg.GetWildcardDomain(host); ok {
-			s.mu.RLock()
-			h, ok = s.proxies[wild]
-			s.mu.RUnlock()
+	if ok {
+		return h, s.cfg.Proxies[host]
+	}
+
+	if wild, ok := s.cfg.GetWildcardDomain(host); ok {
+		s.mu.RLock()
+		h, ok = s.proxies[wild]
+		s.mu.RUnlock()
+		if ok {
+			return h, s.cfg.Proxies[wild]
 		}
 	}
 
-	return h
+	return nil, nil
 }
 
 func (s *Server) loadProxies(reload bool) error {
@@ -539,6 +616,8 @@ func (s *Server) renewCerts() {
 			for _, d := range ds {
 				s.handleCertObtain(d, false)
 			}
+
+			s.certm.SetLastRenewalCheck(time.Now())
 		}
 	}
 }
@@ -650,6 +729,21 @@ func (s *Server) Reload() error {
 	if err := s.loadProxies(true); err != nil {
 		return fmt.Errorf("failed to load proxies: %v", err)
 	}
+
+	// Update auth manager's allowed hosts if auth is enabled
+	if s.authm != nil {
+		allowedHosts := make([]string, 0, len(newCfg.Proxies))
+		for domain := range newCfg.Proxies {
+			allowedHosts = append(allowedHosts, domain)
+		}
+		s.authm.UpdateAllowedHosts(allowedHosts)
+
+		// Also update secret key if it changed
+		if newCfg.Auth.SecretKey != "" {
+			s.authm.UpdateSecretKey(newCfg.Auth.SecretKey)
+		}
+	}
+
 	return nil
 }
 
@@ -659,4 +753,27 @@ func orStr(a, b string) string {
 	}
 
 	return b
+}
+
+// generateSecretKey generates a random 32-byte secret key
+func generateSecretKey() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand should never fail on modern systems
+		// If it does, something is seriously wrong - panic to avoid insecure fallback
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// saveConfig saves the configuration to file
+func saveConfig(cfg *config.Config, cfgPath string) error {
+	if cfgPath == "" {
+		return fmt.Errorf("config path not specified")
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(cfgPath, data, 0644)
 }

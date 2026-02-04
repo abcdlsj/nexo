@@ -13,26 +13,42 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Email      string                   `mapstructure:"email"`
-	Cloudflare CloudflareConfig         `mapstructure:"cloudflare"`
-	Wildcards  []string                 `mapstructure:"wildcards"` // Wildcard domains (e.g. *.example.com)
-	Proxies    map[string]*proxy.Config `mapstructure:"proxies"`
-	BaseDir    string                   `mapstructure:"base_dir"`
-	CertDir    string                   `mapstructure:"cert_dir"`
-	WebUI      WebUIConfig              `mapstructure:"webui"`
-	Staging    bool                     `mapstructure:"staging"` // Use Let's Encrypt staging environment
+	Email      string                   `mapstructure:"email" yaml:"email"`
+	Cloudflare CloudflareConfig         `mapstructure:"cloudflare" yaml:"cloudflare"`
+	Wildcards  []string                 `mapstructure:"wildcards" yaml:"wildcards"` // Wildcard domains (e.g. *.example.com)
+	Proxies    map[string]*proxy.Config `mapstructure:"proxies" yaml:"proxies"`
+	BaseDir    string                   `mapstructure:"base_dir" yaml:"base_dir"`
+	CertDir    string                   `mapstructure:"cert_dir" yaml:"cert_dir"`
+	WebUI      WebUIConfig              `mapstructure:"webui" yaml:"webui,omitempty"`
+	Auth       AuthConfig               `mapstructure:"auth" yaml:"auth,omitempty"`
+	Staging    bool                     `mapstructure:"staging" yaml:"staging,omitempty"` // Use Let's Encrypt staging environment
+}
+
+// AuthConfig represents OAuth authentication configuration
+type AuthConfig struct {
+	GitHub     GitHubAuthConfig `mapstructure:"github" yaml:"github,omitempty"`
+	AuthHost   string           `mapstructure:"auth_host" yaml:"auth_host,omitempty"`   // Unified auth domain for OAuth callback
+	SecretKey  string           `mapstructure:"secret_key" yaml:"secret_key,omitempty"` // Secret key for signing tokens
+	SessionTTL string           `mapstructure:"session_ttl" yaml:"session_ttl,omitempty"` // Session TTL (e.g. "24h")
+}
+
+// GitHubAuthConfig represents GitHub OAuth configuration
+type GitHubAuthConfig struct {
+	ClientID     string   `mapstructure:"client_id" yaml:"client_id,omitempty"`
+	ClientSecret string   `mapstructure:"client_secret" yaml:"client_secret,omitempty"`
+	AllowedUsers []string `mapstructure:"allowed_users" yaml:"allowed_users,omitempty"`
 }
 
 // WebUIConfig represents WebUI-specific configuration
 type WebUIConfig struct {
-	Port     string `mapstructure:"port"`     // WebUI port (default: 8080)
-	Username string `mapstructure:"username"` // WebUI login username
-	Password string `mapstructure:"password"` // WebUI login password (bcrypt hashed)
+	Port     string `mapstructure:"port" yaml:"port,omitempty"`         // WebUI port (default: 8080)
+	Username string `mapstructure:"username" yaml:"username,omitempty"` // WebUI login username
+	Password string `mapstructure:"password" yaml:"password,omitempty"` // WebUI login password (bcrypt hashed)
 }
 
 // CloudflareConfig represents Cloudflare-specific configuration
 type CloudflareConfig struct {
-	APIToken string `mapstructure:"api_token"`
+	APIToken string `mapstructure:"api_token" yaml:"api_token"`
 }
 
 // Load loads the configuration from file

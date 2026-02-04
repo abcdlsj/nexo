@@ -33,10 +33,11 @@ type Config struct {
 
 // Manager handles certificate operations
 type Manager struct {
-	config Config
-	mu     sync.RWMutex
-	certs  map[string]*tls.Certificate
-	client *lego.Client
+	config           Config
+	mu               sync.RWMutex
+	certs            map[string]*tls.Certificate
+	client           *lego.Client
+	lastRenewalCheck time.Time
 }
 
 // New creates a new certificate manager
@@ -266,4 +267,18 @@ func (u *User) GetRegistration() *registration.Resource {
 
 func (u *User) GetPrivateKey() crypto.PrivateKey {
 	return u.key
+}
+
+// LastRenewalCheck returns the last time certificates were checked for renewal
+func (m *Manager) LastRenewalCheck() time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastRenewalCheck
+}
+
+// SetLastRenewalCheck updates the last renewal check time
+func (m *Manager) SetLastRenewalCheck(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRenewalCheck = t
 }

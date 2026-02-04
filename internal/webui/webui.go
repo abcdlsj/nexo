@@ -2,10 +2,12 @@ package webui
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -13,10 +15,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
@@ -37,15 +41,17 @@ type Handler struct {
 	cfg      *config.Config
 	cfgPath  string
 	certMgr  *cert.Manager
+	authMgr  *auth.Manager
 	proxies  map[string]*proxy.Handler
 	onChange func() error
 }
 
-func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, proxies map[string]*proxy.Handler, onChange func() error) *Handler {
+func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error) *Handler {
 	return &Handler{
 		cfg:      cfg,
 		cfgPath:  cfgPath,
 		certMgr:  certMgr,
+		authMgr:  authMgr,
 		proxies:  proxies,
 		onChange: onChange,
 	}
@@ -68,6 +74,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/config/update", h.authMiddleware(h.handleUpdateConfig))
 	mux.HandleFunc("/config/wildcard/add", h.authMiddleware(h.handleAddWildcard))
 	mux.HandleFunc("/config/wildcard/delete", h.authMiddleware(h.handleDeleteWildcard))
+	mux.HandleFunc("/config/secret-key/regenerate", h.authMiddleware(h.handleRegenerateSecretKey))
 }
 
 // authMiddleware checks if user is authenticated
@@ -235,8 +242,8 @@ type CertInfo struct {
 	ExpiryDate     string
 	DaysLeft       int
 	Issuer         string
-	UsesWildcard   bool   // 是否使用了 wildcard 证书
-	WildcardDomain string // 使用的 wildcard 域名（如果有）
+	UsesWildcard   bool   // whether using a wildcard certificate
+	WildcardDomain string // the wildcard domain used (if any)
 }
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -361,18 +368,28 @@ func (h *Handler) handleDeleteProxy(w http.ResponseWriter, r *http.Request) {
 
 type CertsData struct {
 	PageData
-	Wildcards []string
-	Certs     []CertInfo
+	Wildcards   []string
+	Certs       []CertInfo
+	LastRenewal string
 }
 
 func (h *Handler) handleCerts(w http.ResponseWriter, r *http.Request) {
+	var lastRenewal string
+	if h.certMgr != nil {
+		t := h.certMgr.LastRenewalCheck()
+		if !t.IsZero() {
+			lastRenewal = t.Format("2006-01-02 15:04:05")
+		}
+	}
+
 	data := CertsData{
 		PageData: PageData{
 			ActiveNav: "certs",
 			Config:    h.cfg,
 		},
-		Wildcards: h.cfg.Wildcards,
-		Certs:     h.getCertInfo(),
+		Wildcards:   h.cfg.Wildcards,
+		Certs:       h.getCertInfo(),
+		LastRenewal: lastRenewal,
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "certs.html", data); err != nil {
@@ -466,14 +483,7 @@ func (h *Handler) handleAddWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := strings.TrimSpace(r.FormValue("wildcard"))
 	if wildcard != "" && strings.HasPrefix(wildcard, "*.") {
-		exists := false
-		for _, w := range h.cfg.Wildcards {
-			if w == wildcard {
-				exists = true
-				break
-			}
-		}
-		if !exists {
+		if !slices.Contains(h.cfg.Wildcards, wildcard) {
 			h.cfg.Wildcards = append(h.cfg.Wildcards, wildcard)
 			if err := h.saveAndReload(); err != nil {
 				log.Error("Failed to save config", "err", err)
@@ -494,13 +504,9 @@ func (h *Handler) handleDeleteWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := r.FormValue("wildcard")
 	if wildcard != "" {
-		newWildcards := []string{}
-		for _, w := range h.cfg.Wildcards {
-			if w != wildcard {
-				newWildcards = append(newWildcards, w)
-			}
-		}
-		h.cfg.Wildcards = newWildcards
+		h.cfg.Wildcards = slices.DeleteFunc(h.cfg.Wildcards, func(w string) bool {
+			return w == wildcard
+		})
 		if err := h.saveAndReload(); err != nil {
 			log.Error("Failed to save config", "err", err)
 			http.Redirect(w, r, "/config?error=save_failed", http.StatusSeeOther)
@@ -509,6 +515,38 @@ func (h *Handler) handleDeleteWildcard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/config", http.StatusSeeOther)
+}
+
+func (h *Handler) handleRegenerateSecretKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/config", http.StatusSeeOther)
+		return
+	}
+
+	// Generate new secret key
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Error("Failed to generate secret key", "err", err)
+		http.Redirect(w, r, "/config?error=Failed+to+generate+secret+key", http.StatusSeeOther)
+		return
+	}
+	newKey := base64.RawURLEncoding.EncodeToString(b)
+
+	h.cfg.Auth.SecretKey = newKey
+
+	// Update auth manager's secret key so existing sessions are invalidated immediately
+	if h.authMgr != nil {
+		h.authMgr.UpdateSecretKey(newKey)
+	}
+
+	if err := h.saveAndReload(); err != nil {
+		log.Error("Failed to save config", "err", err)
+		http.Redirect(w, r, "/config?error=Failed+to+save+config", http.StatusSeeOther)
+		return
+	}
+
+	log.Info("Secret key regenerated")
+	http.Redirect(w, r, "/config?message=Secret+key+regenerated.+All+users+have+been+logged+out.", http.StatusSeeOther)
 }
 
 func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {

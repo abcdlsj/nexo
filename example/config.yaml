@@ -1,39 +1,59 @@
-# Nexo 配置文件示例
+# Nexo Configuration Example
 
-# 基础配置
-base_dir: /etc/nexo          # 默认配置目录
-cert_dir: /etc/nexo/certs    # 默认证书目录
+# Basic settings
 email: your-email@example.com
+staging: false                    # Set to true to use Let's Encrypt staging environment
+base_dir: /etc/nexo               # Base directory for nexo data
+cert_dir: /etc/nexo/certs         # Certificate storage directory
+
+# Cloudflare DNS API configuration (required for DNS-01 challenge)
 cloudflare:
-  api_token: your-cloudflare-api-token    # 从 Cloudflare 获取的 API Token
+  api_token: your-cloudflare-api-token
 
-# 通配符域名证书配置
-domains:
-  - example.com                # 将为 *.example.com 申请通配符证书
-  - yourdomain.com             # 将为 *.yourdomain.com 申请通配符证书
+# Wildcard domains (will obtain *.example.com certificate)
+wildcards:
+  - "*.example.com"
+  - "*.yourdomain.com"
 
-# 代理配置
+# WebUI configuration
+webui:
+  port: "8080"                    # WebUI listen port
+  username: admin                 # Login username
+  password: "$2a$10$xxxxx..."     # Bcrypt hashed password (generate with: make password PASSWORD=xxx)
+
+# GitHub OAuth authentication (optional)
+auth:
+  auth_host: auth.example.com     # Unified callback domain for OAuth
+  secret_key: ""                  # Auto-generated if empty
+  session_ttl: "24h"              # Session TTL
+  github:
+    client_id: your-github-client-id
+    client_secret: your-github-client-secret
+    allowed_users:
+      - your-github-username
+      - another-allowed-user
+
+# Proxy configurations
 proxies:
-  # blog 服务
+  # Blog service (protected by OAuth)
   blog.example.com:
     upstream: http://localhost:3000
+    auth: true
 
-  # API 服务
+  # Public API service
   api.example.com:
     upstream: http://localhost:8080
+    auth: false
 
-  # 主站
+  # Main website
   www.example.com:
     upstream: http://localhost:8000
 
-  # 开发环境
-  dev.yourdomain.com:
-    upstream: http://localhost:3001
+  # Redirect example
+  old.example.com:
+    redirect: https://www.example.com
 
-  # 测试环境
-  test.yourdomain.com:
-    upstream: http://localhost:3002
-
-  # 特定域名（在 domains 里查不到，会单独申请证书）
+  # Standalone domain (not in wildcards, will obtain individual certificate)
   specific.otherdomain.com:
     upstream: http://localhost:5000
+    auth: true

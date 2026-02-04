@@ -25,8 +25,9 @@ const (
 
 // Config represents the configuration for a proxy
 type Config struct {
-	Upstream string `mapstructure:"upstream"`
-	Redirect string `mapstructure:"redirect"`
+	Upstream string `mapstructure:"upstream" yaml:"upstream,omitempty"`
+	Redirect string `mapstructure:"redirect" yaml:"redirect,omitempty"`
+	Auth     bool   `mapstructure:"auth" yaml:"auth,omitempty"` // Enable OAuth authentication for this proxy
 }
 
 // Handler represents a proxy handler
