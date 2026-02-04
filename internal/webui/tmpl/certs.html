@@ -39,55 +39,185 @@
     </div>
     {{else}}
     <div class="proxy-list">
+      <!-- 先显示 Wildcard 域名证书及其子域名 -->
+      {{range .Wildcards}}
+        {{$wildcard := .}}
+        {{$baseDomain := slice . 2}}
+        {{range $.Certs}}
+          {{if eq .Domain $wildcard}}
+            <!-- Wildcard 域名本身的证书 -->
+            <div class="proxy-item cert-wildcard">
+              <div class="proxy-info">
+                <div class="proxy-domain">
+                  <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary-color);">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                    <path d="M2 17l10 5 10-5"></path>
+                    <path d="M2 12l10 5 10-5"></path>
+                  </svg>
+                  {{.Domain}}
+                  <span class="proxy-type-badge proxy">wildcard</span>
+                  {{if eq .Status "valid"}}
+                  <span class="cert-status valid">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Valid
+                  </span>
+                  {{else if eq .Status "expiring"}}
+                  <span class="cert-status expiring">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    Expiring Soon
+                  </span>
+                  {{else}}
+                  <span class="cert-status error">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    Error
+                  </span>
+                  {{end}}
+                </div>
+                <div class="proxy-target">
+                  Issuer: {{.Issuer}} | Expires: {{.ExpiryDate}} | Days Left: {{.DaysLeft}}
+                </div>
+              </div>
+              <div class="proxy-actions">
+                <form method="POST" action="/certs/renew" style="display: inline;">
+                  <input type="hidden" name="domain" value="{{.Domain}}">
+                  <button type="submit" class="btn btn-secondary btn-sm" title="Renew Certificate">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Renew
+                  </button>
+                </form>
+              </div>
+            </div>
+          {{end}}
+        {{end}}
+        
+        <!-- 显示使用该 wildcard 的子域名证书 -->
+        {{range $.Certs}}
+          {{if and .UsesWildcard (eq .WildcardDomain $wildcard) (ne .Domain $wildcard)}}
+            <div class="proxy-item cert-wildcard-child">
+              <div class="proxy-info" style="padding-left: 2rem;">
+                <div class="proxy-domain">
+                  <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="12" y2="12"></line>
+                  </svg>
+                  {{.Domain}}
+                  <span class="proxy-type-badge redirect">uses {{.WildcardDomain}}</span>
+                  {{if eq .Status "valid"}}
+                  <span class="cert-status valid">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Valid
+                  </span>
+                  {{else if eq .Status "expiring"}}
+                  <span class="cert-status expiring">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    Expiring Soon
+                  </span>
+                  {{else}}
+                  <span class="cert-status error">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    Error
+                  </span>
+                  {{end}}
+                </div>
+                <div class="proxy-target">
+                  Issuer: {{.Issuer}} | Expires: {{.ExpiryDate}} | Days Left: {{.DaysLeft}}
+                </div>
+              </div>
+              <div class="proxy-actions">
+                <form method="POST" action="/certs/renew" style="display: inline;">
+                  <input type="hidden" name="domain" value="{{.Domain}}">
+                  <button type="submit" class="btn btn-secondary btn-sm" title="Renew Certificate">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Renew
+                  </button>
+                </form>
+              </div>
+            </div>
+          {{end}}
+        {{end}}
+      {{end}}
+      
+      <!-- 显示独立的普通域名证书（不使用 wildcard 的） -->
       {{range .Certs}}
-      <div class="proxy-item">
-        <div class="proxy-info">
-          <div class="proxy-domain">
-            {{.Domain}}
-            {{if eq .Status "valid"}}
-            <span class="cert-status valid">
-              <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-              Valid
-            </span>
-            {{else if eq .Status "expiring"}}
-            <span class="cert-status expiring">
-              <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-              </svg>
-              Expiring Soon
-            </span>
-            {{else}}
-            <span class="cert-status error">
-              <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="15" y1="9" x2="9" y2="15"></line>
-                <line x1="9" y1="9" x2="15" y2="15"></line>
-              </svg>
-              Error
-            </span>
-            {{end}}
-          </div>
-          <div class="proxy-target">
-            Issuer: {{.Issuer}} | Expires: {{.ExpiryDate}} | Days Left: {{.DaysLeft}}
-          </div>
-        </div>
-        <div class="proxy-actions">
-          <form method="POST" action="/certs/renew" style="display: inline;">
-            <input type="hidden" name="domain" value="{{.Domain}}">
-            <button type="submit" class="btn btn-secondary btn-sm" title="Renew Certificate">
-              <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-              </svg>
-              Renew
-            </button>
-          </form>
-        </div>
-      </div>
+        {{if not .UsesWildcard}}
+          {{$isWildcard := hasPrefix .Domain "*."}}
+          {{if not $isWildcard}}
+            <div class="proxy-item">
+              <div class="proxy-info">
+                <div class="proxy-domain">
+                  {{.Domain}}
+                  {{if eq .Status "valid"}}
+                  <span class="cert-status valid">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Valid
+                  </span>
+                  {{else if eq .Status "expiring"}}
+                  <span class="cert-status expiring">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="12" y1="8" x2="12" y2="12"></line>
+                      <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    Expiring Soon
+                  </span>
+                  {{else}}
+                  <span class="cert-status error">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                    Error
+                  </span>
+                  {{end}}
+                </div>
+                <div class="proxy-target">
+                  Issuer: {{.Issuer}} | Expires: {{.ExpiryDate}} | Days Left: {{.DaysLeft}}
+                </div>
+              </div>
+              <div class="proxy-actions">
+                <form method="POST" action="/certs/renew" style="display: inline;">
+                  <input type="hidden" name="domain" value="{{.Domain}}">
+                  <button type="submit" class="btn btn-secondary btn-sm" title="Renew Certificate">
+                    <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="23 4 23 10 17 10"></polyline>
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                    </svg>
+                    Renew
+                  </button>
+                </form>
+              </div>
+            </div>
+          {{end}}
+        {{end}}
       {{end}}
     </div>
     {{if .LastRenewal}}

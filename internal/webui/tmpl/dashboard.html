@@ -93,13 +93,22 @@
           </div>
         </div>
         {{else}}
-        <div class="proxy-list">
-          {{range .Certs}}
-          <div class="proxy-item">
-            <div class="proxy-info">
-              <div class="proxy-domain">
-                {{.Domain}}
-                {{if eq .Status "valid"}}
+         <div class="proxy-list">
+           {{range .Certs}}
+           <div class="proxy-item {{if .UsesWildcard}}cert-wildcard-child{{end}}">
+             <div class="proxy-info">
+               <div class="proxy-domain">
+                 {{if .UsesWildcard}}
+                 <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);">
+                   <line x1="12" y1="5" x2="12" y2="19"></line>
+                   <line x1="5" y1="12" x2="12" y2="12"></line>
+                 </svg>
+                 {{end}}
+                 {{.Domain}}
+                 {{if .UsesWildcard}}
+                 <span class="proxy-type-badge redirect">uses {{.WildcardDomain}}</span>
+                 {{end}}
+                 {{if eq .Status "valid"}}
                 <span class="cert-status valid">
                   <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="20 6 9 17 4 12"></polyline>

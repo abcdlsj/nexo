@@ -230,11 +230,13 @@ type DashboardData struct {
 }
 
 type CertInfo struct {
-	Domain     string
-	Status     string
-	ExpiryDate string
-	DaysLeft   int
-	Issuer     string
+	Domain         string
+	Status         string
+	ExpiryDate     string
+	DaysLeft       int
+	Issuer         string
+	UsesWildcard   bool   // 是否使用了 wildcard 证书
+	WildcardDomain string // 使用的 wildcard 域名（如果有）
 }
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -572,7 +574,10 @@ func (h *Handler) getCertForDomain(domain string) CertInfo {
 		certFile = filepath.Join(h.cfg.CertDir, baseDomain+".crt")
 		keyFile = filepath.Join(h.cfg.CertDir, baseDomain+".key")
 		if _, err := os.Stat(certFile); err == nil {
-			return h.readCertInfo(domain, certFile, keyFile)
+			info = h.readCertInfo(domain, certFile, keyFile)
+			info.UsesWildcard = true
+			info.WildcardDomain = wild
+			return info
 		}
 	}
 
