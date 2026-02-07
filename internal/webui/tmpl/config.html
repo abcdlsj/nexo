@@ -101,6 +101,49 @@
     </div>
     {{end}}
 
+    <!-- Security Settings -->
+    <div class="card mt-4">
+      <h3 style="margin-bottom: 1rem;">Security Settings</h3>
+      <form method="POST" action="/config/security/update">
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" name="rate_limit_enabled" {{if .Config.Security.RateLimitEnabled}}checked{{end}}>
+            Enable Rate Limiting
+          </label>
+          <p class="text-sm text-muted" style="margin-top: 0.25rem;">Limit requests per IP to prevent abuse</p>
+        </div>
+        <div class="grid-2" style="margin-top: 1rem;">
+          <div class="form-group">
+            <label for="rate_limit_requests">Max Requests</label>
+            <input type="number" id="rate_limit_requests" name="rate_limit_requests" value="{{if .Config.Security.RateLimitRequests}}{{.Config.Security.RateLimitRequests}}{{else}}100{{end}}" min="1" style="width: 100%;">
+          </div>
+          <div class="form-group">
+            <label for="rate_limit_window">Window (seconds)</label>
+            <input type="number" id="rate_limit_window" name="rate_limit_window" value="{{if .Config.Security.RateLimitWindow}}{{.Config.Security.RateLimitWindow}}{{else}}60{{end}}" min="1" style="width: 100%;">
+          </div>
+        </div>
+        <div class="grid-2" style="margin-top: 1rem;">
+          <div class="form-group">
+            <label for="max_login_attempts">Max Login Attempts</label>
+            <input type="number" id="max_login_attempts" name="max_login_attempts" value="{{if .Config.Security.MaxLoginAttempts}}{{.Config.Security.MaxLoginAttempts}}{{else}}5{{end}}" min="1" style="width: 100%;">
+            <p class="text-sm text-muted">Attempts before lockout</p>
+          </div>
+          <div class="form-group">
+            <label for="login_lockout_minutes">Lockout Duration (minutes)</label>
+            <input type="number" id="login_lockout_minutes" name="login_lockout_minutes" value="{{if .Config.Security.LoginLockoutMinutes}}{{.Config.Security.LoginLockoutMinutes}}{{else}}30{{end}}" min="1" style="width: 100%;">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">
+          <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          Save Security Settings
+        </button>
+      </form>
+    </div>
+
     <!-- Wildcard Domains -->
     <div class="card mt-4">
       <h3 style="margin-bottom: 1rem;">Wildcard Domains</h3>

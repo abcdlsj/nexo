@@ -406,6 +406,8 @@
         input[type="url"],
         input[type="email"],
         input[type="password"],
+        input[type="number"],
+        input[type="hidden"],
         select,
         textarea {
             padding: 0.5rem 0.75rem;
@@ -418,10 +420,15 @@
             font-family: inherit;
         }
 
+        input[type="hidden"] {
+            display: none;
+        }
+
         input[type="text"]:focus,
         input[type="url"]:focus,
         input[type="email"]:focus,
         input[type="password"]:focus,
+        input[type="number"]:focus,
         select:focus,
         textarea:focus {
             outline: none;

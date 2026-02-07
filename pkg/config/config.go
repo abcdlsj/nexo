@@ -21,14 +21,25 @@ type Config struct {
 	CertDir    string                   `mapstructure:"cert_dir" yaml:"cert_dir"`
 	WebUI      WebUIConfig              `mapstructure:"webui" yaml:"webui,omitempty"`
 	Auth       AuthConfig               `mapstructure:"auth" yaml:"auth,omitempty"`
+	Security   SecurityConfig           `mapstructure:"security" yaml:"security,omitempty"`
 	Staging    bool                     `mapstructure:"staging" yaml:"staging,omitempty"` // Use Let's Encrypt staging environment
+}
+
+// SecurityConfig represents security-related configuration
+type SecurityConfig struct {
+	RateLimitEnabled    bool     `mapstructure:"rate_limit_enabled" yaml:"rate_limit_enabled,omitempty"`
+	RateLimitRequests   int      `mapstructure:"rate_limit_requests" yaml:"rate_limit_requests,omitempty"`
+	RateLimitWindow     int      `mapstructure:"rate_limit_window" yaml:"rate_limit_window,omitempty"`
+	MaxLoginAttempts    int      `mapstructure:"max_login_attempts" yaml:"max_login_attempts,omitempty"`
+	LoginLockoutMinutes int      `mapstructure:"login_lockout_minutes" yaml:"login_lockout_minutes,omitempty"`
+	IPBlacklist         []string `mapstructure:"ip_blacklist" yaml:"ip_blacklist,omitempty"`
 }
 
 // AuthConfig represents OAuth authentication configuration
 type AuthConfig struct {
 	GitHub     GitHubAuthConfig `mapstructure:"github" yaml:"github,omitempty"`
-	AuthHost   string           `mapstructure:"auth_host" yaml:"auth_host,omitempty"`   // Unified auth domain for OAuth callback
-	SecretKey  string           `mapstructure:"secret_key" yaml:"secret_key,omitempty"` // Secret key for signing tokens
+	AuthHost   string           `mapstructure:"auth_host" yaml:"auth_host,omitempty"`     // Unified auth domain for OAuth callback
+	SecretKey  string           `mapstructure:"secret_key" yaml:"secret_key,omitempty"`   // Secret key for signing tokens
 	SessionTTL string           `mapstructure:"session_ttl" yaml:"session_ttl,omitempty"` // Session TTL (e.g. "24h")
 }
 

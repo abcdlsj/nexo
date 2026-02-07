@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"html/template"
@@ -18,12 +19,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
+	"github.com/abcdlsj/nexo/pkg/traffic"
 	"github.com/charmbracelet/log"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
@@ -39,24 +42,53 @@ var (
 	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
 
+type loginAttempt struct {
+	count       int
+	lastAttempt time.Time
+	lockedUntil *time.Time
+}
+
 type Handler struct {
-	cfg      *config.Config
-	cfgPath  string
-	certMgr  *cert.Manager
-	authMgr  *auth.Manager
-	proxies  map[string]*proxy.Handler
-	onChange func() error
+	cfg           *config.Config
+	cfgPath       string
+	certMgr       *cert.Manager
+	authMgr       *auth.Manager
+	proxies       map[string]*proxy.Handler
+	onChange      func() error
+	rateLimiter   *RateLimiter
+	loginAttempts map[string]*loginAttempt
+	loginMu       sync.RWMutex
+	trafficMgr    *traffic.Manager
 }
 
 func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error) *Handler {
-	return &Handler{
-		cfg:      cfg,
-		cfgPath:  cfgPath,
-		certMgr:  certMgr,
-		authMgr:  authMgr,
-		proxies:  proxies,
-		onChange: onChange,
+	rlConfig := &RateLimitConfig{
+		Enabled:  cfg.Security.RateLimitEnabled,
+		Requests: cfg.Security.RateLimitRequests,
+		Window:   time.Duration(cfg.Security.RateLimitWindow) * time.Second,
 	}
+	if rlConfig.Requests == 0 {
+		rlConfig.Requests = 100
+	}
+	if rlConfig.Window == 0 {
+		rlConfig.Window = time.Minute
+	}
+
+	handler := &Handler{
+		cfg:           cfg,
+		cfgPath:       cfgPath,
+		certMgr:       certMgr,
+		authMgr:       authMgr,
+		proxies:       proxies,
+		onChange:      onChange,
+		rateLimiter:   NewRateLimiter(rlConfig),
+		loginAttempts: make(map[string]*loginAttempt),
+	}
+
+	// Start cleanup goroutine for login attempts
+	go handler.cleanupLoginAttempts()
+
+	return handler
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -77,6 +109,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/config/wildcard/add", h.authMiddleware(h.handleAddWildcard))
 	mux.HandleFunc("/config/wildcard/delete", h.authMiddleware(h.handleDeleteWildcard))
 	mux.HandleFunc("/config/secret-key/regenerate", h.authMiddleware(h.handleRegenerateSecretKey))
+	mux.HandleFunc("/config/security/update", h.authMiddleware(h.handleUpdateSecurity))
+
+	// Traffic routes
+	mux.HandleFunc("/traffic", h.authMiddleware(h.handleTraffic))
+	mux.HandleFunc("/api/traffic", h.authMiddleware(h.handleTrafficAPI))
 }
 
 // authMiddleware checks if user is authenticated
@@ -105,14 +142,15 @@ func (h *Handler) validateSession(token string) bool {
 	if h.cfg.WebUI.Password == "" {
 		return false
 	}
-	// Token format: timestamp:signature
+	// Token format: timestamp:nonce:signature
 	parts := strings.Split(token, ":")
-	if len(parts) != 2 {
+	if len(parts) != 3 {
 		return false
 	}
 
 	timestamp := parts[0]
-	signature := parts[1]
+	nonce := parts[1]
+	signature := parts[2]
 
 	// Check if timestamp is within 24 hours
 	ts, err := strconv.ParseInt(timestamp, 10, 64)
@@ -124,20 +162,34 @@ func (h *Handler) validateSession(token string) bool {
 	}
 
 	// Verify HMAC signature using password as key
+	data := timestamp + ":" + nonce
 	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
-	mac.Write([]byte(timestamp))
+	mac.Write([]byte(data))
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
 
 	return subtle.ConstantTimeCompare([]byte(signature), []byte(expectedSig)) == 1
 }
 
-// generateSessionToken generates a new signed session token
+// generateSessionToken generates a new signed session token with random nonce
 func (h *Handler) generateSessionToken() string {
+	// Generate random nonce for additional entropy
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		// crypto/rand should never fail on modern systems
+		// If it does, panic to avoid insecure fallback
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	nonceStr := hex.EncodeToString(nonce)
+
+	// Token format: timestamp:nonce:signature
+	data := timestamp + ":" + nonceStr
 	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
-	mac.Write([]byte(timestamp))
+	mac.Write([]byte(data))
 	signature := hex.EncodeToString(mac.Sum(nil))
-	return timestamp + ":" + signature
+
+	return data + ":" + signature
 }
 
 // handleLogin handles login page and form submission
@@ -148,10 +200,19 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check rate limit
+	clientIP := getClientIP(r)
+	if !h.rateLimiter.Allow(clientIP) {
+		http.Error(w, "Rate limit exceeded. Please try again later.", http.StatusTooManyRequests)
+		return
+	}
+
 	data := struct {
 		PageData
 		Error    string
 		Redirect string
+		Locked   bool
+		LockTime int // minutes
 	}{
 		PageData: PageData{
 			ActiveNav: "",
@@ -168,8 +229,15 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			redirect = "/"
 		}
 
-		// Validate credentials
-		if h.validateCredentials(username, password) {
+		// Check if account is locked
+		if allowed, lockDuration := h.checkLoginAllowed(clientIP, username); !allowed {
+			data.Locked = true
+			data.LockTime = int(lockDuration.Minutes()) + 1
+			data.Error = fmt.Sprintf("Account locked. Please try again in %d minutes.", data.LockTime)
+		} else if h.validateCredentials(username, password) {
+			// Success - clear failed attempts
+			h.recordLoginSuccess(clientIP, username)
+
 			// Set session cookie with signed token
 			http.SetCookie(w, &http.Cookie{
 				Name:     "nexo_session",
@@ -181,9 +249,11 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			})
 			http.Redirect(w, r, redirect, http.StatusSeeOther)
 			return
+		} else {
+			// Failed login - record attempt
+			h.recordLoginFailure(clientIP, username)
+			data.Error = "Invalid username or password"
 		}
-
-		data.Error = "Invalid username or password"
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
@@ -683,4 +753,164 @@ func (h *Handler) saveAndReload() error {
 		}
 	}
 	return nil
+}
+
+// checkLoginAllowed checks if login is allowed for the IP/username
+func (h *Handler) checkLoginAllowed(ip, username string) (bool, time.Duration) {
+	key := ip + ":" + username
+
+	h.loginMu.RLock()
+	attempt, exists := h.loginAttempts[key]
+	h.loginMu.RUnlock()
+
+	if !exists {
+		return true, 0
+	}
+
+	// Check if locked
+	if attempt.lockedUntil != nil && time.Now().Before(*attempt.lockedUntil) {
+		return false, time.Until(*attempt.lockedUntil)
+	}
+
+	return true, 0
+}
+
+// recordLoginFailure records a failed login attempt
+func (h *Handler) recordLoginFailure(ip, username string) {
+	key := ip + ":" + username
+
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+
+	attempt, exists := h.loginAttempts[key]
+	if !exists {
+		attempt = &loginAttempt{}
+		h.loginAttempts[key] = attempt
+	}
+
+	attempt.count++
+	attempt.lastAttempt = time.Now()
+
+	maxAttempts := h.cfg.Security.MaxLoginAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 5
+	}
+
+	if attempt.count >= maxAttempts {
+		lockoutMinutes := h.cfg.Security.LoginLockoutMinutes
+		if lockoutMinutes == 0 {
+			lockoutMinutes = 30
+		}
+		lockedUntil := time.Now().Add(time.Duration(lockoutMinutes) * time.Minute)
+		attempt.lockedUntil = &lockedUntil
+		log.Warn("Account locked due to failed login attempts", "ip", ip, "username", username, "attempts", attempt.count)
+	}
+}
+
+// recordLoginSuccess clears login failures on success
+func (h *Handler) recordLoginSuccess(ip, username string) {
+	key := ip + ":" + username
+
+	h.loginMu.Lock()
+	delete(h.loginAttempts, key)
+	h.loginMu.Unlock()
+}
+
+// SetTrafficManager sets the traffic manager
+func (h *Handler) SetTrafficManager(tm *traffic.Manager) {
+	h.trafficMgr = tm
+}
+
+// cleanupLoginAttempts periodically removes stale login attempt records
+func (h *Handler) cleanupLoginAttempts() {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		h.loginMu.Lock()
+		for key, attempt := range h.loginAttempts {
+			// Remove records older than 24 hours
+			if time.Since(attempt.lastAttempt) > 24*time.Hour {
+				delete(h.loginAttempts, key)
+			}
+		}
+		h.loginMu.Unlock()
+	}
+}
+
+// handleUpdateSecurity handles security configuration updates
+func (h *Handler) handleUpdateSecurity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/config", http.StatusSeeOther)
+		return
+	}
+
+	// Parse form values
+	h.cfg.Security.RateLimitEnabled = r.FormValue("rate_limit_enabled") == "on"
+	if reqStr := r.FormValue("rate_limit_requests"); reqStr != "" {
+		if req, err := strconv.Atoi(reqStr); err == nil && req > 0 {
+			h.cfg.Security.RateLimitRequests = req
+		}
+	}
+	if windowStr := r.FormValue("rate_limit_window"); windowStr != "" {
+		if window, err := strconv.Atoi(windowStr); err == nil && window > 0 {
+			h.cfg.Security.RateLimitWindow = window
+		}
+	}
+	if maxAttemptsStr := r.FormValue("max_login_attempts"); maxAttemptsStr != "" {
+		if maxAttempts, err := strconv.Atoi(maxAttemptsStr); err == nil && maxAttempts > 0 {
+			h.cfg.Security.MaxLoginAttempts = maxAttempts
+		}
+	}
+	if lockoutStr := r.FormValue("login_lockout_minutes"); lockoutStr != "" {
+		if lockout, err := strconv.Atoi(lockoutStr); err == nil && lockout > 0 {
+			h.cfg.Security.LoginLockoutMinutes = lockout
+		}
+	}
+
+	// Update rate limiter config
+	h.rateLimiter.config.Enabled = h.cfg.Security.RateLimitEnabled
+	h.rateLimiter.config.Requests = h.cfg.Security.RateLimitRequests
+	h.rateLimiter.config.Window = time.Duration(h.cfg.Security.RateLimitWindow) * time.Second
+
+	if err := h.saveAndReload(); err != nil {
+		log.Error("Failed to save security config", "err", err)
+		http.Redirect(w, r, "/config?error=Failed+to+save+security+config", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/config?message=Security+configuration+saved", http.StatusSeeOther)
+}
+
+// handleTraffic renders the traffic page
+func (h *Handler) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	data := struct {
+		PageData
+	}{
+		PageData: PageData{
+			ActiveNav: "traffic",
+			Config:    h.cfg,
+		},
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "traffic.html", data); err != nil {
+		log.Error("Failed to render traffic", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// handleTrafficAPI returns traffic data as JSON
+func (h *Handler) handleTrafficAPI(w http.ResponseWriter, r *http.Request) {
+	if h.trafficMgr == nil {
+		http.Error(w, "Traffic tracking not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	data := h.trafficMgr.GetData()
+
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Error("Failed to encode traffic data", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
 }

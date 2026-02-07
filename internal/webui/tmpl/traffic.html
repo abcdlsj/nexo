@@ -1,0 +1,307 @@
+{{define "traffic"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    {{template "head" .}}
+    <title>Traffic - Nexo</title>
+    <style>
+        .traffic-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--foreground);
+        }
+        
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
+            margin-top: 0.25rem;
+        }
+        
+        .traffic-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .traffic-table th,
+        .traffic-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .traffic-table th {
+            font-weight: 600;
+            color: var(--muted-foreground);
+            font-size: 0.875rem;
+        }
+        
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .badge-https {
+            background: var(--success);
+            color: white;
+        }
+        
+        .badge-http {
+            background: var(--warning);
+            color: white;
+        }
+        
+        .refresh-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
+        }
+        
+        .refresh-indicator .spinner {
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .card-header h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .card-body {
+            padding: 1rem 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    {{template "nav" .}}
+    
+    <main class="container">
+        <div class="page-header">
+            <h1>Traffic Statistics</h1>
+            <div class="refresh-indicator">
+                <span class="spinner" id="spinner" style="display: none;"></span>
+                <span id="lastUpdate">Last updated: just now</span>
+            </div>
+        </div>
+        
+        <div class="traffic-grid" id="statsGrid">
+            <!-- Stats will be populated by JavaScript -->
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2>Domain Statistics</h2>
+            </div>
+            <div class="card-body">
+                <table class="traffic-table" id="domainTable">
+                    <thead>
+                        <tr>
+                            <th>Domain</th>
+                            <th>Requests</th>
+                            <th>HTTPS %</th>
+                            <th>Unique IPs</th>
+                        </tr>
+                    </thead>
+                    <tbody id="domainTableBody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2>Recent Requests</h2>
+            </div>
+            <div class="card-body">
+                <table class="traffic-table" id="requestsTable">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Domain</th>
+                            <th>Method</th>
+                            <th>Path</th>
+                            <th>IP</th>
+                            <th>Protocol</th>
+                        </tr>
+                    </thead>
+                    <tbody id="requestsTableBody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+    
+    <script>
+        let refreshInterval;
+        
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+        
+        function formatPercent(num) {
+            return (num * 100).toFixed(1) + '%';
+        }
+        
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        }
+        
+        function updateStats(data) {
+            const httpsPercent = data.total_requests > 0 
+                ? data.https_requests / data.total_requests 
+                : 0;
+            
+            document.getElementById('statsGrid').innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${formatNumber(data.total_requests)}</div>
+                    <div class="stat-label">Total Requests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${formatPercent(httpsPercent)}</div>
+                    <div class="stat-label">HTTPS Traffic</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${formatNumber(data.unique_ips)}</div>
+                    <div class="stat-label">Unique IPs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${Object.keys(data.domain_stats).length}</div>
+                    <div class="stat-label">Active Domains</div>
+                </div>
+            `;
+        }
+        
+        function updateDomainTable(data) {
+            const tbody = document.getElementById('domainTableBody');
+            const domains = Object.values(data.domain_stats)
+                .sort((a, b) => b.requests - a.requests);
+            
+            tbody.innerHTML = domains.map(d => {
+                const httpsPercent = d.requests > 0 ? d.https_count / d.requests : 0;
+                return `
+                    <tr>
+                        <td>${d.domain}</td>
+                        <td>${formatNumber(d.requests)}</td>
+                        <td>${formatPercent(httpsPercent)}</td>
+                        <td>${formatNumber(d.unique_ips)}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function updateRequestsTable(data) {
+            const tbody = document.getElementById('requestsTableBody');
+            const records = data.records.slice(-50).reverse();
+            
+            tbody.innerHTML = records.map(r => `
+                <tr>
+                    <td>${formatTime(r.ts)}</td>
+                    <td>${r.domain}</td>
+                    <td>${r.method}</td>
+                    <td>${r.path}</td>
+                    <td>${r.ip}</td>
+                    <td>
+                        <span class="badge ${r.https ? 'badge-https' : 'badge-http'}">
+                            ${r.https ? 'HTTPS' : 'HTTP'}
+                        </span>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        async function fetchTrafficData() {
+            document.getElementById('spinner').style.display = 'inline-block';
+            
+            try {
+                const response = await fetch('/api/traffic');
+                const data = await response.json();
+                
+                updateStats(data);
+                updateDomainTable(data);
+                updateRequestsTable(data);
+                
+                document.getElementById('lastUpdate').textContent = 
+                    'Last updated: ' + new Date().toLocaleTimeString();
+            } catch (err) {
+                console.error('Failed to fetch traffic data:', err);
+            } finally {
+                document.getElementById('spinner').style.display = 'none';
+            }
+        }
+        
+        function startRefresh() {
+            fetchTrafficData();
+            refreshInterval = setInterval(fetchTrafficData, 5000);
+        }
+        
+        function stopRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        }
+        
+        // Start on page load
+        startRefresh();
+        
+        // Stop when page is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopRefresh();
+            } else {
+                startRefresh();
+            }
+        });
+    </script>
+</body>
+</html>
+{{end}}

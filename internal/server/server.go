@@ -26,6 +26,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
+	"github.com/abcdlsj/nexo/pkg/traffic"
 	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
@@ -56,10 +57,11 @@ type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	cfg     *config.Config
-	certm   *cert.Manager
-	authm   *auth.Manager
-	proxies map[string]*proxy.Handler
+	cfg        *config.Config
+	certm      *cert.Manager
+	authm      *auth.Manager
+	proxies    map[string]*proxy.Handler
+	trafficMgr *traffic.Manager
 
 	failCerts   map[string]time.Time
 	failCertsMu sync.RWMutex
@@ -131,15 +133,20 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		}
 	}
 
+	// Initialize traffic manager
+	trafficDir := filepath.Join(cfg.BaseDir, "traffic")
+	trafficMgr := traffic.NewManager(trafficDir)
+
 	s := &Server{
-		ctx:       ctx,
-		cancel:    cancel,
-		cfg:       cfg,
-		certm:     m,
-		authm:     authm,
-		proxies:   make(map[string]*proxy.Handler),
-		failCerts: make(map[string]time.Time),
-		cfgPath:   cfgPath,
+		ctx:        ctx,
+		cancel:     cancel,
+		cfg:        cfg,
+		certm:      m,
+		authm:      authm,
+		proxies:    make(map[string]*proxy.Handler),
+		trafficMgr: trafficMgr,
+		failCerts:  make(map[string]time.Time),
+		cfgPath:    cfgPath,
 	}
 
 	go s.renewCerts()
@@ -185,6 +192,7 @@ func (s *Server) startWebUI() {
 	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.authm, s.proxies, func() error {
 		return s.Reload()
 	})
+	webuiHandler.SetTrafficManager(s.trafficMgr)
 	mux := http.NewServeMux()
 	webuiHandler.RegisterRoutes(mux)
 
@@ -337,6 +345,9 @@ func (s *Server) Stop() {
 	if s.watcher != nil {
 		s.watcher.Close()
 	}
+	if s.trafficMgr != nil {
+		s.trafficMgr.Stop()
+	}
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -344,12 +355,31 @@ func (s *Server) Stop() {
 
 func (s *Server) handleHTTPS() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Add security headers
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 
 		host := s.extractHost(r)
 		if host == "" {
 			http.Error(w, "Invalid host", http.StatusBadRequest)
 			return
+		}
+
+		// Record traffic
+		if s.trafficMgr != nil {
+			s.trafficMgr.Record(traffic.RequestRecord{
+				Timestamp: time.Now(),
+				Domain:    host,
+				IP:        s.getClientIP(r),
+				Method:    r.Method,
+				Path:      r.URL.Path,
+				IsHTTPS:   r.TLS != nil,
+				UserAgent: r.UserAgent(),
+			})
 		}
 
 		// Handle OAuth2 routes if auth is enabled
@@ -382,6 +412,25 @@ func (s *Server) handleHTTPS() http.Handler {
 
 		h.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return xff
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return ip
 }
 
 func (s *Server) extractHost(r *http.Request) string {
