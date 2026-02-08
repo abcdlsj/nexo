@@ -157,16 +157,20 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 
 // Start starts the HTTPS server and WebUI
 func (s *Server) Start() error {
-	if err := s.loadProxies(false); err != nil {
-		return fmt.Errorf("failed to load proxy configs: %v", err)
-	}
-
 	if err := s.setupConfigWatcher(); err != nil {
 		log.Error("Failed to setup config watcher", "err", err)
 	}
 
-	// Start WebUI server
+	// Start WebUI server first (in background)
 	go s.startWebUI()
+
+	// Wait for WebUI to be ready
+	time.Sleep(3 * time.Second)
+
+	// Then load proxies (so WebUI upstream is accessible)
+	if err := s.loadProxies(false); err != nil {
+		return fmt.Errorf("failed to load proxy configs: %v", err)
+	}
 
 	srv := &http.Server{
 		Addr:              ":443",
