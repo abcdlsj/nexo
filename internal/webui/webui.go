@@ -61,7 +61,7 @@ type Handler struct {
 	trafficMgr    *traffic.Manager
 }
 
-func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error) *Handler {
+func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error, trafficMgr *traffic.Manager) *Handler {
 	rlConfig := &RateLimitConfig{
 		Enabled:  cfg.Security.RateLimitEnabled,
 		Requests: cfg.Security.RateLimitRequests,
@@ -83,6 +83,7 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 		onChange:      onChange,
 		rateLimiter:   NewRateLimiter(rlConfig),
 		loginAttempts: make(map[string]*loginAttempt),
+		trafficMgr:    trafficMgr,
 	}
 
 	// Start cleanup goroutine for login attempts
@@ -296,6 +297,18 @@ type PageData struct {
 	Config    *config.Config
 }
 
+func (h *Handler) render404(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+	data := PageData{
+		ActiveNav: "",
+		Config:    h.cfg,
+	}
+	if err := tmpl.ExecuteTemplate(w, "404.html", data); err != nil {
+		log.Error("Failed to render 404", "err", err)
+		http.Error(w, "404 Not Found", http.StatusNotFound)
+	}
+}
+
 type DashboardData struct {
 	PageData
 	Stats struct {
@@ -320,7 +333,7 @@ type CertInfo struct {
 
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		h.render404(w)
 		return
 	}
 

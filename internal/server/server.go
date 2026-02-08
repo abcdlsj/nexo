@@ -53,6 +53,76 @@ const (
 	renewalThreshold = 30 * 24 * time.Hour
 )
 
+const domainNotConfiguredHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Not Configured</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            max-width: 600px;
+        }
+        .icon {
+            font-size: 80px;
+            margin-bottom: 1rem;
+            opacity: 0.9;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+        p {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+            opacity: 0.9;
+        }
+        .domain {
+            background: rgba(255,255,255,0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 1rem;
+            word-break: break-all;
+        }
+        .footer {
+            margin-top: 3rem;
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🔧</div>
+        <h1>Domain Not Configured</h1>
+        <p>The domain you are trying to access has not been configured on this server.</p>
+        <p class="domain" id="domain"></p>
+        <p>If you are the administrator, please check your configuration file.</p>
+        <div class="footer">
+            <p>Powered by <a href="https://github.com/abcdlsj/nexo" style="color: #fff; text-decoration: underline;">Nexo</a></p>
+        </div>
+    </div>
+    <script>
+        document.getElementById('domain').textContent = location.hostname;
+    </script>
+</body>
+</html>`
+
 type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -195,8 +265,7 @@ func (s *Server) Start() error {
 func (s *Server) startWebUI() {
 	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.authm, s.proxies, func() error {
 		return s.Reload()
-	})
-	webuiHandler.SetTrafficManager(s.trafficMgr)
+	}, s.trafficMgr)
 	mux := http.NewServeMux()
 	webuiHandler.RegisterRoutes(mux)
 
@@ -395,7 +464,9 @@ func (s *Server) handleHTTPS() http.Handler {
 
 		h, cfg := s.findHandlerWithConfig(host)
 		if h == nil {
-			http.Error(w, "Domain not configured", http.StatusNotFound)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(domainNotConfiguredHTML))
 			return
 		}
 
