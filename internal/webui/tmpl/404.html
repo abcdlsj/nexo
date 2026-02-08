@@ -1,89 +1,47 @@
 {{template "head" .}}
 <body>
   {{template "nav" .}}
-  
+
   <div class="container">
-    <div class="error-container">
-      <div class="error-content">
-        <div class="error-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="8" y1="12" x2="16" y2="12"></line>
-          </svg>
-        </div>
-        <h1 class="error-code">404</h1>
-        <h2 class="error-title">Page Not Found</h2>
-        <p class="error-message">The page you're looking for doesn't exist or has been moved.</p>
-        <a href="/" class="btn btn-primary error-btn">
-          <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="19" y1="12" x2="5" y2="12"></line>
-            <polyline points="12 19 5 12 12 5"></polyline>
-          </svg>
-          Back to Dashboard
-        </a>
-      </div>
+    <div class="empty-state error-404">
+      <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M16 16s-1.5-2-4-2-4 2-4 2"/>
+        <line x1="9" y1="9" x2="9.01" y2="9"/>
+        <line x1="15" y1="9" x2="15.01" y2="9"/>
+      </svg>
+      <div class="error-code">404</div>
+      <div class="empty-state-title">Page Not Found</div>
+      <p>The page you're looking for doesn't exist or has been moved.</p>
+      <a href="/" class="btn btn-primary" style="margin-top: 1rem;">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"/>
+          <polyline points="12 19 5 12 12 5"/>
+        </svg>
+        Back to Dashboard
+      </a>
     </div>
   </div>
 
   <style>
-    .error-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .error-404 {
       min-height: calc(100vh - 200px);
-      padding: 2rem;
+      justify-content: center;
     }
 
-    .error-content {
-      text-align: center;
-      max-width: 400px;
-    }
-
-    .error-icon {
+    .error-404 .empty-state-icon {
       width: 80px;
       height: 80px;
-      margin: 0 auto 1.5rem;
-      color: var(--muted-foreground);
       opacity: 0.5;
-    }
-
-    .error-icon svg {
-      width: 100%;
-      height: 100%;
     }
 
     .error-code {
       font-size: 6rem;
       font-weight: 700;
-      color: var(--foreground);
-      margin-bottom: 0.5rem;
-      line-height: 1;
-      letter-spacing: -0.05em;
-    }
-
-    .error-title {
-      font-size: 1.5rem;
-      font-weight: 600;
-      color: var(--foreground);
-      margin-bottom: 1rem;
-    }
-
-    .error-message {
-      font-size: 1rem;
       color: var(--muted-foreground);
-      margin-bottom: 2rem;
-      line-height: 1.6;
-    }
-
-    .error-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1.5rem;
-    }
-
-    .error-btn:hover {
-      opacity: 0.9;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.05em;
+      line-height: 1;
     }
 
     @media (max-width: 640px) {
@@ -91,11 +49,7 @@
         font-size: 4rem;
       }
 
-      .error-title {
-        font-size: 1.25rem;
-      }
-
-      .error-icon {
+      .error-404 .empty-state-icon {
         width: 60px;
         height: 60px;
       }

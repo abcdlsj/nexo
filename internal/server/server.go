@@ -58,63 +58,182 @@ const domainNotConfiguredHTML = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Domain Not Configured</title>
+    <title>404 Not Found</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --background: #fafafa;
+            --foreground: #18181b;
+            --muted: #f4f4f5;
+            --muted-foreground: #71717a;
+            --border: #e4e4e7;
+            --primary: #18181b;
+            --primary-foreground: #fafafa;
+            --radius: 0.625rem;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background: #09090b;
+                --foreground: #fafafa;
+                --muted: #27272a;
+                --muted-foreground: #a1a1aa;
+                --border: #27272a;
+                --primary: #fafafa;
+                --primary-foreground: #18181b;
+            }
+        }
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: var(--background);
+            color: var(--foreground);
+            line-height: 1.6;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #fff;
         }
+
         .container {
-            text-align: center;
+            max-width: 500px;
+            margin: 0 auto;
             padding: 2rem;
-            max-width: 600px;
+            text-align: center;
         }
-        .icon {
-            font-size: 80px;
-            margin-bottom: 1rem;
-            opacity: 0.9;
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1rem;
         }
-        h1 {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-            font-weight: 600;
-        }
-        p {
-            font-size: 1.1rem;
-            line-height: 1.6;
+
+        .empty-state-icon {
+            width: 80px;
+            height: 80px;
             margin-bottom: 1.5rem;
-            opacity: 0.9;
+            opacity: 0.5;
+            stroke: var(--muted-foreground);
         }
+
+        .error-code {
+            font-size: 6rem;
+            font-weight: 700;
+            color: var(--muted-foreground);
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.05em;
+            line-height: 1;
+        }
+
+        .empty-state-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--foreground);
+        }
+
+        p {
+            color: var(--muted-foreground);
+            margin-bottom: 1rem;
+        }
+
         .domain {
-            background: rgba(255,255,255,0.2);
+            font-family: 'JetBrains Mono', monospace;
+            background-color: var(--muted);
             padding: 0.5rem 1rem;
-            border-radius: 8px;
-            font-family: monospace;
-            font-size: 1rem;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            color: var(--foreground);
+            margin: 1rem 0;
+            display: inline-block;
             word-break: break-all;
         }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-radius: var(--radius);
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background-color: var(--primary);
+            color: var(--primary-foreground);
+            text-decoration: none;
+            margin-top: 1rem;
+        }
+
+        .btn:hover {
+            opacity: 0.8;
+        }
+
         .footer {
             margin-top: 3rem;
-            font-size: 0.9rem;
-            opacity: 0.7;
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
+        }
+
+        .footer a {
+            color: var(--foreground);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 640px) {
+            .error-code {
+                font-size: 4rem;
+            }
+
+            .empty-state-icon {
+                width: 60px;
+                height: 60px;
+            }
+
+            .container {
+                padding: 1rem;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="icon">🔧</div>
-        <h1>Domain Not Configured</h1>
-        <p>The domain you are trying to access has not been configured on this server.</p>
-        <p class="domain" id="domain"></p>
-        <p>If you are the administrator, please check your configuration file.</p>
-        <div class="footer">
-            <p>Powered by <a href="https://github.com/abcdlsj/nexo" style="color: #fff; text-decoration: underline;">Nexo</a></p>
+        <div class="empty-state">
+            <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M16 16s-1.5-2-4-2-4 2-4 2"/>
+                <line x1="9" y1="9" x2="9.01" y2="9"/>
+                <line x1="15" y1="9" x2="15.01" y2="9"/>
+            </svg>
+            <div class="error-code">404</div>
+            <div class="empty-state-title">Page Not Found</div>
+            <p>The page you're looking for doesn't exist or has been moved.</p>
+            <p class="domain" id="domain"></p>
+            <div class="footer">
+                <p>Powered by <a href="https://github.com/abcdlsj/nexo">Nexo</a></p>
+            </div>
         </div>
     </div>
     <script>
