@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -58,7 +59,7 @@ func newProxyTransport() *http.Transport {
 		}).DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout:  30 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
@@ -87,7 +88,7 @@ func New(cfg *Config, host string) *Handler {
 	p.FlushInterval = -1 // flush immediately for streaming responses
 	p.Director = createDirector(p.Director)
 	p.ModifyResponse = createResponseModifier(target, host)
-	p.ErrorHandler = createErrorHandler(host)
+	p.ErrorHandler = createErrorHandler(host, p)
 
 	return &Handler{
 		proxy:    p,
@@ -158,8 +159,15 @@ func handleRedirect(r *http.Response, target *url.URL, domain string) error {
 	return nil
 }
 
-func createErrorHandler(host string) func(http.ResponseWriter, *http.Request, error) {
+func createErrorHandler(host string, proxy *httputil.ReverseProxy) func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
+		retryCount := r.Context().Value("retryCount")
+		if rc, ok := retryCount.(int); ok && rc == 0 {
+			r = r.WithContext(context.WithValue(r.Context(), "retryCount", 1))
+			time.Sleep(100 * time.Millisecond)
+			proxy.ServeHTTP(w, r)
+			return
+		}
 		log.Error("Proxy error", "domain", host, "err", err)
 		http.Error(w, "Proxy Error", http.StatusBadGateway)
 	}

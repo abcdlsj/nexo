@@ -248,6 +248,7 @@ func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
 		ActiveNav: activeNav,
 		Config:    h.cfg,
 		CSRFToken: csrfToken,
+		CurrentIP: getClientIP(r),
 	}
 }
 
@@ -366,6 +367,7 @@ type PageData struct {
 	ActiveNav string
 	Config    *config.Config
 	CSRFToken string
+	CurrentIP string
 }
 
 func (h *Handler) render404(w http.ResponseWriter) {

@@ -133,6 +133,9 @@ func (m *Manager) addRecord(r RequestRecord) {
 		}
 		m.data.DomainStats[r.Domain] = stats
 	}
+	if stats.UniqueIPs == nil {
+		stats.UniqueIPs = make(map[string]bool)
+	}
 	stats.Requests++
 	if r.IsHTTPS {
 		stats.HTTPSCount++

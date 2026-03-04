@@ -410,7 +410,23 @@ func (s *Server) startWebUI() {
 }
 
 func (s *Server) createTLSConfig() *tls.Config {
-	getCert := func(domain string) (*tls.Certificate, error) {
+	getCert := func(domain string, clientIP string) (*tls.Certificate, error) {
+		// Reject empty domain
+		if domain == "" {
+			if clientIP != "" {
+				log.Warn("TLS request with empty domain", "ip", clientIP)
+			}
+			return nil, fmt.Errorf("empty domain")
+		}
+
+		// Check if domain is configured
+		if _, configured := s.cfg.Proxies[domain]; !configured {
+			if _, wildcard := s.cfg.GetWildcardDomain(domain); !wildcard {
+				log.Warn("TLS request for unconfigured domain", "ip", clientIP, "domain", domain)
+				return nil, fmt.Errorf("domain not configured: %s", domain)
+			}
+		}
+
 		// Try exact domain first
 		cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
 		if err == nil {
@@ -436,9 +452,13 @@ func (s *Server) createTLSConfig() *tls.Config {
 
 	return &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			clientIP := ""
+			if hello.Conn != nil {
+				clientIP = hello.Conn.RemoteAddr().(*net.TCPAddr).IP.String()
+			}
 			return &tls.Config{
 				GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-					return getCert(hello.ServerName)
+					return getCert(hello.ServerName, clientIP)
 				},
 				MinVersion: tls.VersionTLS12,
 			}, nil
