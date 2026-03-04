@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -41,6 +42,8 @@ var (
 		"hasPrefix": strings.HasPrefix,
 	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
+
+type csrfContextKey struct{}
 
 type loginAttempt struct {
 	count       int
@@ -117,24 +120,33 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/traffic", h.authMiddleware(h.handleTrafficAPI))
 }
 
-// authMiddleware checks if user is authenticated
+// authMiddleware checks if user is authenticated and validates CSRF for POST
 func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// If no password is configured, allow access
 		if h.cfg.WebUI.Password == "" {
 			next(w, r)
 			return
 		}
 
-		// Check session cookie
 		cookie, err := r.Cookie("nexo_session")
 		if err != nil || !h.validateSession(cookie.Value) {
-			// Redirect to login
 			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusSeeOther)
 			return
 		}
 
-		next(w, r)
+		// CSRF validation for state-changing requests
+		if r.Method == http.MethodPost {
+			csrfCookie, err := r.Cookie("nexo_csrf")
+			csrfForm := r.FormValue("csrf_token")
+			if err != nil || csrfForm == "" || csrfCookie.Value != csrfForm || !h.validateCSRFToken(csrfForm) {
+				http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+				return
+			}
+		}
+
+		token := h.getOrCreateCSRFToken(w, r)
+		ctx := context.WithValue(r.Context(), csrfContextKey{}, token)
+		next(w, r.WithContext(ctx))
 	}
 }
 
@@ -193,6 +205,52 @@ func (h *Handler) generateSessionToken() string {
 	return data + ":" + signature
 }
 
+func (h *Handler) generateCSRFToken() string {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	nonceStr := hex.EncodeToString(nonce)
+	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac.Write([]byte(nonceStr))
+	return nonceStr + ":" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (h *Handler) validateCSRFToken(token string) bool {
+	parts := strings.Split(token, ":")
+	if len(parts) != 2 {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac.Write([]byte(parts[0]))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
+}
+
+func (h *Handler) getOrCreateCSRFToken(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie("nexo_csrf"); err == nil && h.validateCSRFToken(c.Value) {
+		return c.Value
+	}
+	token := h.generateCSRFToken()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "nexo_csrf",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	return token
+}
+
+func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
+	csrfToken, _ := r.Context().Value(csrfContextKey{}).(string)
+	return PageData{
+		ActiveNav: activeNav,
+		Config:    h.cfg,
+		CSRFToken: csrfToken,
+	}
+}
+
 // handleLogin handles login page and form submission
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// If no password is configured, redirect to home
@@ -208,6 +266,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	csrfToken := h.getOrCreateCSRFToken(w, r)
+
 	data := struct {
 		PageData
 		Error    string
@@ -218,11 +278,21 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		PageData: PageData{
 			ActiveNav: "",
 			Config:    h.cfg,
+			CSRFToken: csrfToken,
 		},
 		Redirect: r.URL.Query().Get("redirect"),
 	}
 
 	if r.Method == http.MethodPost {
+		if csrfCookie, err := r.Cookie("nexo_csrf"); err != nil || r.FormValue("csrf_token") != csrfCookie.Value || !h.validateCSRFToken(r.FormValue("csrf_token")) {
+			data.Error = "Invalid request"
+			if err := tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+				log.Error("Failed to render login", "err", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		username := r.FormValue("username")
 		password := r.FormValue("password")
 		redirect := r.FormValue("redirect")
@@ -295,6 +365,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 type PageData struct {
 	ActiveNav string
 	Config    *config.Config
+	CSRFToken string
 }
 
 func (h *Handler) render404(w http.ResponseWriter) {
@@ -338,11 +409,8 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := DashboardData{
-		PageData: PageData{
-			ActiveNav: "dashboard",
-			Config:    h.cfg,
-		},
-		Proxies: h.cfg.Proxies,
+		PageData: h.newPageData(r, "dashboard"),
+		Proxies:  h.cfg.Proxies,
 	}
 
 	data.Stats.TotalProxies = len(h.cfg.Proxies)
@@ -372,13 +440,10 @@ type ProxiesData struct {
 
 func (h *Handler) handleProxies(w http.ResponseWriter, r *http.Request) {
 	data := ProxiesData{
-		PageData: PageData{
-			ActiveNav: "proxies",
-			Config:    h.cfg,
-		},
-		Proxies: h.cfg.Proxies,
-		Message: r.URL.Query().Get("message"),
-		Error:   r.URL.Query().Get("error"),
+		PageData: h.newPageData(r, "proxies"),
+		Proxies:  h.cfg.Proxies,
+		Message:  r.URL.Query().Get("message"),
+		Error:    r.URL.Query().Get("error"),
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "proxies.html", data); err != nil {
@@ -417,6 +482,8 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.Redirect = redirect
 	}
+
+	cfg.Auth = r.FormValue("auth") == "on"
 
 	if h.cfg.Proxies == nil {
 		h.cfg.Proxies = make(map[string]*proxy.Config)
@@ -468,10 +535,7 @@ func (h *Handler) handleCerts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := CertsData{
-		PageData: PageData{
-			ActiveNav: "certs",
-			Config:    h.cfg,
-		},
+		PageData:    h.newPageData(r, "certs"),
 		Wildcards:   h.cfg.Wildcards,
 		Certs:       h.getCertInfo(),
 		LastRenewal: lastRenewal,
@@ -503,25 +567,24 @@ func (h *Handler) handleRenewCert(w http.ResponseWriter, r *http.Request) {
 
 type ConfigData struct {
 	PageData
-	Message   string
-	Error     string
-	RawConfig string
+	Message        string
+	Error          string
+	RawConfig      string
+	MaskedAPIToken string
 }
 
 func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	data := ConfigData{
-		PageData: PageData{
-			ActiveNav: "config",
-			Config:    h.cfg,
-		},
-		Message: r.URL.Query().Get("message"),
-		Error:   r.URL.Query().Get("error"),
+		PageData:       h.newPageData(r, "config"),
+		Message:        r.URL.Query().Get("message"),
+		Error:          r.URL.Query().Get("error"),
+		MaskedAPIToken: maskAPIToken(h.cfg.Cloudflare.APIToken),
 	}
 
 	if h.cfgPath != "" {
 		content, err := os.ReadFile(h.cfgPath)
 		if err == nil {
-			data.RawConfig = string(content)
+			data.RawConfig = maskSensitiveConfig(string(content))
 		}
 	}
 
@@ -900,10 +963,7 @@ func (h *Handler) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		PageData
 	}{
-		PageData: PageData{
-			ActiveNav: "traffic",
-			Config:    h.cfg,
-		},
+		PageData: h.newPageData(r, "traffic"),
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "traffic.html", data); err != nil {
@@ -926,4 +986,30 @@ func (h *Handler) handleTrafficAPI(w http.ResponseWriter, r *http.Request) {
 		log.Error("Failed to encode traffic data", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+func maskAPIToken(token string) string {
+	if len(token) > 4 {
+		return "••••" + token[len(token)-4:]
+	}
+	if token != "" {
+		return "••••••••"
+	}
+	return ""
+}
+
+func maskSensitiveConfig(raw string) string {
+	sensitiveKeys := []string{"api_token:", "secret_key:", "client_secret:", "password:"}
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for _, key := range sensitiveKeys {
+			if strings.HasPrefix(trimmed, key) {
+				idx := strings.Index(line, key)
+				lines[i] = line[:idx+len(key)] + " \"••••••••\""
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }

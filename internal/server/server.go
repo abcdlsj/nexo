@@ -35,8 +35,8 @@ import (
 const (
 	// Server timeouts
 	readTimeout       = 30 * time.Second
-	writeTimeout      = 30 * time.Second
-	idleTimeout       = 120 * time.Second
+	writeTimeout      = 120 * time.Second
+	idleTimeout       = 620 * time.Second // Must be > Cloudflare's keep-alive (~300-600s) to avoid stale connection 520s
 	readHeaderTimeout = 10 * time.Second
 
 	// Certificate management

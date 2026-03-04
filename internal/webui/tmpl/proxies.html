@@ -1,28 +1,17 @@
 {{template "head" .}}
 <body>
   {{template "nav" .}}
-  
+
   <div class="container">
     <div class="section-header">
       <h1>Proxies</h1>
     </div>
 
-    {{if .Message}}
-    <div class="card mb-4" style="background-color: rgba(34, 197, 94, 0.1); border-color: var(--success);">
-      <p style="color: var(--success); margin: 0;">{{.Message}}</p>
-    </div>
-    {{end}}
-
-    {{if .Error}}
-    <div class="card mb-4" style="background-color: rgba(239, 68, 68, 0.1); border-color: var(--destructive);">
-      <p style="color: var(--destructive); margin: 0;">{{.Error}}</p>
-    </div>
-    {{end}}
-
     <!-- Add Proxy Card -->
     <div class="card mb-4">
       <h3 style="margin-bottom: 1rem;">Add New Proxy</h3>
       <form method="POST" action="/proxies/add">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div class="grid-2">
           <div class="form-group">
             <label for="domain">Domain</label>
@@ -44,7 +33,14 @@
           <label for="redirect">Redirect To</label>
           <input type="text" id="redirect" name="redirect" placeholder="www.example.com" style="width: 100%;">
         </div>
-        <div style="display: flex; gap: 0.75rem;">
+        <div class="form-group" style="margin-bottom: 0;">
+          <label style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" name="auth" id="auth">
+            Enable Auth
+          </label>
+          <p class="text-sm text-muted" style="margin-top: 0.25rem;">Require OAuth authentication for this proxy</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
           <button type="submit" class="btn btn-primary">
             <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -81,6 +77,9 @@
             {{else}}
             <span class="proxy-type-badge redirect">Redirect</span>
             {{end}}
+            {{if $proxy.Auth}}
+            <span class="proxy-type-badge" style="background-color: rgba(139, 92, 246, 0.1); color: #8b5cf6;">Auth</span>
+            {{end}}
           </div>
           <div class="proxy-target">
             {{if $proxy.Upstream}}
@@ -91,15 +90,23 @@
           </div>
         </div>
         <div class="proxy-actions">
-          <form method="POST" action="/proxies/delete" onsubmit="return confirm('Delete proxy for {{$domain}}?')" style="display: inline;">
-            <input type="hidden" name="domain" value="{{$domain}}">
-            <button type="submit" class="btn btn-ghost btn-icon" title="Delete">
+          <div class="delete-normal">
+            <button type="button" class="btn btn-ghost btn-icon" title="Delete" onclick="showDeleteConfirm(this)">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
                 <polyline points="3 6 5 6 21 6"></polyline>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
               </svg>
             </button>
-          </form>
+          </div>
+          <div class="delete-confirm" style="display: none; align-items: center; gap: 0.5rem;">
+            <span class="text-sm">Delete?</span>
+            <form method="POST" action="/proxies/delete" style="display: inline; margin: 0;">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="domain" value="{{$domain}}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="hideDeleteConfirm(this)">Cancel</button>
+          </div>
         </div>
       </div>
       {{end}}
@@ -109,11 +116,11 @@
 
   <script>
     function toggleType() {
-      const type = document.getElementById('type').value;
-      const upstreamGroup = document.getElementById('upstream-group');
-      const redirectGroup = document.getElementById('redirect-group');
-      const upstreamInput = document.getElementById('upstream');
-      const redirectInput = document.getElementById('redirect');
+      var type = document.getElementById('type').value;
+      var upstreamGroup = document.getElementById('upstream-group');
+      var redirectGroup = document.getElementById('redirect-group');
+      var upstreamInput = document.getElementById('upstream');
+      var redirectInput = document.getElementById('redirect');
 
       if (type === 'proxy') {
         upstreamGroup.style.display = 'block';
@@ -128,6 +135,18 @@
         redirectInput.required = true;
         upstreamInput.value = '';
       }
+    }
+
+    function showDeleteConfirm(btn) {
+      var actions = btn.closest('.proxy-actions');
+      actions.querySelector('.delete-normal').style.display = 'none';
+      actions.querySelector('.delete-confirm').style.display = 'flex';
+    }
+
+    function hideDeleteConfirm(btn) {
+      var actions = btn.closest('.proxy-actions');
+      actions.querySelector('.delete-normal').style.display = '';
+      actions.querySelector('.delete-confirm').style.display = 'none';
     }
   </script>
 </body>

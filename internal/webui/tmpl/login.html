@@ -24,6 +24,7 @@
       {{end}}
 
       <form method="POST" action="/login" class="login-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="redirect" value="{{.Redirect}}">
         
         <div class="form-group">

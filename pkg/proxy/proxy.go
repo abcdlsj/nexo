@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -46,6 +48,25 @@ func (h *Handler) ConfigChanged(newCfg *Config) bool {
 	return h.upstream != newCfg.Upstream
 }
 
+// newProxyTransport creates a Transport dedicated to upstream connections.
+// Each proxy gets its own pool to isolate failures between upstreams.
+func newProxyTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout:  30 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   32,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+}
+
 // New creates a new proxy handler
 func New(cfg *Config, host string) *Handler {
 	if cfg.Redirect != "" {
@@ -62,6 +83,8 @@ func New(cfg *Config, host string) *Handler {
 	}
 
 	p := httputil.NewSingleHostReverseProxy(target)
+	p.Transport = newProxyTransport()
+	p.FlushInterval = -1 // flush immediately for streaming responses
 	p.Director = createDirector(p.Director)
 	p.ModifyResponse = createResponseModifier(target, host)
 	p.ErrorHandler = createErrorHandler(host)
