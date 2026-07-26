@@ -4,53 +4,56 @@
 
   <div class="container">
     <header class="page-intro">
-      <div><div class="eyebrow">Routing table</div><h1>Routes</h1><p class="lede">Connect a domain to an upstream or issue a clean HTTPS redirect.</p></div>
+      <div><div class="eyebrow">Routing table</div><h1>Routes</h1><p class="lede">{{len .Proxies}} configured endpoints</p></div>
     </header>
 
-    <!-- Add Proxy Card -->
-    <div class="card mb-4">
-      <div class="card-header"><div><h2>Add route</h2><p class="card-subtitle">Domain + destination + optional OAuth gate</p></div></div>
+    <details class="route-composer card">
+      <summary>
+        <span><strong>Add route</strong><span class="card-subtitle">Create a proxy or HTTPS redirect</span></span>
+      </summary>
+      <div class="composer-body">
       <form method="POST" action="/proxies/add">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <div class="grid-2">
+        <div class="composer-grid">
           <div class="form-group">
             <label for="domain">Domain</label>
-            <input type="text" id="domain" name="domain" placeholder="example.com" required style="width: 100%;">
+            <input type="text" id="domain" name="domain" placeholder="api.example.com" inputmode="url" autocomplete="off" required>
           </div>
           <div class="form-group">
-            <label for="type">Type</label>
-            <select id="type" name="type" style="width: 100%;" onchange="toggleType()">
-              <option value="proxy">Proxy</option>
-              <option value="redirect">Redirect</option>
-            </select>
+            <span class="field-label" id="route-type-label">Route type</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="route-type-label">
+              <label><input type="radio" name="type" value="proxy" checked onchange="toggleType()">Proxy</label>
+              <label><input type="radio" name="type" value="redirect" onchange="toggleType()">Redirect</label>
+            </div>
           </div>
         </div>
         <div class="form-group" id="upstream-group">
           <label for="upstream">Upstream URL</label>
-          <input type="url" id="upstream" name="upstream" placeholder="http://localhost:8080" style="width: 100%;">
+          <input type="url" id="upstream" name="upstream" placeholder="http://127.0.0.1:8080" autocomplete="off">
         </div>
-        <div class="form-group" id="redirect-group" style="display: none;">
-          <label for="redirect">Redirect To</label>
-          <input type="text" id="redirect" name="redirect" placeholder="www.example.com" style="width: 100%;">
+        <div class="form-group" id="redirect-group" hidden>
+          <label for="redirect">Redirect destination</label>
+          <input type="text" id="redirect" name="redirect" placeholder="https://www.example.com" autocomplete="off">
         </div>
-        <div class="form-group" style="margin-bottom: 0;">
-          <label style="display: flex; align-items: center; gap: 0.5rem;">
+        <div class="composer-actions">
+          <div>
+          <label class="switch-row">
             <input type="checkbox" name="auth" id="auth">
-            Enable Auth
+            Require OAuth authentication
           </label>
-          <p class="text-sm text-muted" style="margin-top: 0.25rem;">Require OAuth authentication for this proxy</p>
-        </div>
-        <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+          <p class="text-xs text-muted" id="auth-help">Applies to proxy routes only</p>
+          </div>
           <button type="submit" class="btn btn-primary">
             <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
-            Add Proxy
+            Add route
           </button>
         </div>
       </form>
-    </div>
+      </div>
+    </details>
 
     <!-- Proxy List -->
     {{if eq (len .Proxies) 0}}
@@ -78,7 +81,7 @@
             <span class="proxy-type-badge redirect">Redirect</span>
             {{end}}
             {{if $proxy.Auth}}
-            <span class="proxy-type-badge" style="background-color: rgba(139, 92, 246, 0.1); color: #8b5cf6;">Auth</span>
+            <span class="proxy-type-badge auth">Auth</span>
             {{end}}
           </div>
           <div class="proxy-target">
@@ -90,23 +93,16 @@
           </div>
         </div>
         <div class="proxy-actions">
-          <div class="delete-normal">
-            <button type="button" class="btn btn-ghost btn-icon" title="Delete" onclick="showDeleteConfirm(this)">
+          <form method="POST" action="/proxies/delete" onsubmit="return confirm('Delete route {{$domain}}?');">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="domain" value="{{$domain}}">
+            <button type="submit" class="btn btn-ghost btn-icon" title="Delete route" aria-label="Delete route {{$domain}}">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
                 <polyline points="3 6 5 6 21 6"></polyline>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
               </svg>
             </button>
-          </div>
-          <div class="delete-confirm" style="display: none; align-items: center; gap: 0.5rem;">
-            <span class="text-sm">Delete?</span>
-            <form method="POST" action="/proxies/delete" style="display: inline; margin: 0;">
-              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-              <input type="hidden" name="domain" value="{{$domain}}">
-              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-            </form>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="hideDeleteConfirm(this)">Cancel</button>
-          </div>
+          </form>
         </div>
       </div>
       {{end}}
@@ -116,38 +112,30 @@
 
   <script>
     function toggleType() {
-      var type = document.getElementById('type').value;
+      var type = document.querySelector('input[name="type"]:checked').value;
       var upstreamGroup = document.getElementById('upstream-group');
       var redirectGroup = document.getElementById('redirect-group');
       var upstreamInput = document.getElementById('upstream');
       var redirectInput = document.getElementById('redirect');
 
       if (type === 'proxy') {
-        upstreamGroup.style.display = 'block';
-        redirectGroup.style.display = 'none';
+        upstreamGroup.hidden = false;
+        redirectGroup.hidden = true;
         upstreamInput.required = true;
         redirectInput.required = false;
         redirectInput.value = '';
+        document.getElementById('auth').disabled = false;
       } else {
-        upstreamGroup.style.display = 'none';
-        redirectGroup.style.display = 'block';
+        upstreamGroup.hidden = true;
+        redirectGroup.hidden = false;
         upstreamInput.required = false;
         redirectInput.required = true;
         upstreamInput.value = '';
+        document.getElementById('auth').checked = false;
+        document.getElementById('auth').disabled = true;
       }
     }
-
-    function showDeleteConfirm(btn) {
-      var actions = btn.closest('.proxy-actions');
-      actions.querySelector('.delete-normal').style.display = 'none';
-      actions.querySelector('.delete-confirm').style.display = 'flex';
-    }
-
-    function hideDeleteConfirm(btn) {
-      var actions = btn.closest('.proxy-actions');
-      actions.querySelector('.delete-normal').style.display = '';
-      actions.querySelector('.delete-confirm').style.display = 'none';
-    }
+    toggleType();
   </script>
 </body>
 </html>

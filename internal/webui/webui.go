@@ -42,7 +42,7 @@ const (
 
 var (
 	//go:embed tmpl/*.html
-	//go:embed tmpl/*.ico
+	//go:embed tmpl/*.svg
 	tmplFS embed.FS
 
 	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
@@ -106,6 +106,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Public routes
 	mux.HandleFunc("/login", h.securityMiddleware(h.handleLogin))
 	mux.HandleFunc("/favicon.ico", h.securityMiddleware(h.handleFavicon))
+	mux.HandleFunc("/favicon.svg", h.securityMiddleware(h.handleFavicon))
 
 	// Protected routes - wrap with auth middleware
 	protected := func(next http.HandlerFunc) http.HandlerFunc {
@@ -766,13 +767,13 @@ func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	data, err := tmplFS.ReadFile("tmpl/nexon.ico")
+	data, err := tmplFS.ReadFile("tmpl/nexo.svg")
 	if err != nil {
 		log.Error("Failed to read favicon", "err", err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(data)
 }

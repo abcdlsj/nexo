@@ -4,7 +4,7 @@
 
   <div class="container">
     <header class="page-intro">
-      <div><div class="eyebrow">System settings</div><h1>Configuration</h1><p class="lede">Manage certificate identity, provider credentials and abuse controls.</p></div>
+      <div><div class="eyebrow">System settings</div><h1>Configuration</h1><p class="lede">Runtime, provider and access settings</p></div>
     </header>
 
     <div class="grid-2">
@@ -32,7 +32,7 @@
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
               <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
-            Save Settings
+            Save basic settings
           </button>
         </form>
       </div>
@@ -57,7 +57,7 @@
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
               <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
-            Save Settings
+            Update token
           </button>
         </form>
       </div>
@@ -101,7 +101,7 @@
       <form method="POST" action="/config/security/update">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 0.5rem;">
+          <label class="switch-row">
             <input type="checkbox" name="rate_limit_enabled" {{if .Config.Security.RateLimitEnabled}}checked{{end}}>
             Enable Rate Limiting
           </label>
@@ -161,10 +161,10 @@
       {{else}}
       <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
         {{range .Config.Wildcards}}
-        <form method="POST" action="/config/wildcard/delete" style="display: inline;">
+        <form method="POST" action="/config/wildcard/delete" style="display: inline;" onsubmit="return confirm('Delete wildcard {{.}}?');">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
           <input type="hidden" name="wildcard" value="{{.}}">
-          <button type="submit" class="btn btn-sm btn-secondary" style="display: inline-flex; align-items: center; gap: 0.375rem;">
+          <button type="submit" class="btn btn-sm btn-ghost" title="Delete wildcard {{.}}">
             {{.}}
             <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -199,13 +199,19 @@
   <script>
     function copyConfig() {
       var code = document.querySelector('.config-yaml code');
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(code.textContent).then(function() {
-          showToast('Copied to clipboard', 'success');
-        }, function() {
-          showToast('Failed to copy', 'error');
-        });
-      }
+      var copy = navigator.clipboard && window.isSecureContext
+        ? navigator.clipboard.writeText(code.textContent)
+        : Promise.reject(new Error('Clipboard unavailable'));
+      copy.then(function() {
+        showToast('Copied to clipboard', 'success');
+      }, function() {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        showToast('Config selected - copy it from the browser menu', 'error');
+      });
     }
   </script>
 </body>

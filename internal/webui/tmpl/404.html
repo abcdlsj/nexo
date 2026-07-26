@@ -2,58 +2,27 @@
 <body>
   {{template "nav" .}}
 
-  <div class="container">
-    <div class="empty-state error-404">
-      <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M16 16s-1.5-2-4-2-4 2-4 2"/>
-        <line x1="9" y1="9" x2="9.01" y2="9"/>
-        <line x1="15" y1="9" x2="15.01" y2="9"/>
-      </svg>
-      <div class="error-code">404</div>
-      <div class="empty-state-title">Page Not Found</div>
-      <p>The page you're looking for doesn't exist or has been moved.</p>
-      <a href="/" class="btn btn-primary" style="margin-top: 1rem;">
-        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="19" y1="12" x2="5" y2="12"/>
-          <polyline points="12 19 5 12 12 5"/>
-        </svg>
-        Back to Dashboard
-      </a>
-    </div>
-  </div>
-
+  <main class="container">
+    <section class="not-found">
+      <div class="not-found-code" aria-hidden="true">404</div>
+      <div>
+        <div class="eyebrow">Not found</div>
+        <h1>This route went nowhere.</h1>
+        <p class="lede">Check the address or return to the control room.</p>
+        <a href="/" class="btn btn-primary not-found-action">
+          <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          Back to dashboard
+        </a>
+      </div>
+    </section>
+  </main>
   <style>
-    .error-404 {
-      min-height: calc(100vh - 200px);
-      justify-content: center;
-    }
-
-    .error-404 .empty-state-icon {
-      width: 80px;
-      height: 80px;
-      opacity: 0.5;
-    }
-
-    .error-code {
-      font-size: 6rem;
-      font-weight: 700;
-      color: var(--muted-foreground);
-      margin-bottom: 0.5rem;
-      letter-spacing: -0.05em;
-      line-height: 1;
-    }
-
-    @media (max-width: 640px) {
-      .error-code {
-        font-size: 4rem;
-      }
-
-      .error-404 .empty-state-icon {
-        width: 60px;
-        height: 60px;
-      }
-    }
+    .not-found { min-height: calc(100vh - 150px); display: grid; grid-template-columns: auto minmax(0, 440px); align-items: center; justify-content: center; gap: 2.5rem; }
+    .not-found-code { padding: .2rem .8rem; border: 2px solid var(--border); border-radius: var(--radius); background: var(--coral); color: #111; box-shadow: var(--shadow); font-family: var(--display-font); font-size: 5rem; font-weight: 900; line-height: 1; }
+    .not-found-action { margin-top: 1.2rem; }
+    @media (max-width: 580px) { .not-found { grid-template-columns: 1fr; align-content: center; gap: 1.5rem; } .not-found-code { width: max-content; font-size: 3.75rem; } }
   </style>
 </body>
 </html>

@@ -145,4 +145,11 @@ func TestPreviewPages(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "api.nexo.local") {
 		t.Fatalf("traffic fixture response = %d %s", w.Code, w.Body.String())
 	}
+
+	r = httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/svg+xml" || !strings.Contains(w.Body.String(), "<svg") {
+		t.Fatalf("favicon response = %d %q %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
 }

@@ -4,18 +4,21 @@
   
   <div class="container">
     <header class="page-intro">
-      <div><div class="eyebrow">System overview</div><h1>Control room</h1><p class="lede">Routes, redirects and certificate health at a glance. Problems should look like problems.</p></div>
-      <a href="/proxies" class="btn btn-primary">Add route →</a>
+      <div><div class="eyebrow">System overview</div><h1>Control room</h1><p class="lede">Current routing and TLS state</p></div>
+      <a href="/proxies" class="btn btn-primary">
+        <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        Add route
+      </a>
     </header>
 
     <!-- Stats Grid -->
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-label">Total Proxies</div>
+        <div class="stat-label">Routes</div>
         <div class="stat-value">{{.Stats.TotalProxies}}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Active Proxies</div>
+        <div class="stat-label">Proxies</div>
         <div class="stat-value" style="color: var(--success);">{{.Stats.ActiveProxies}}</div>
       </div>
       <div class="stat-card">
@@ -50,7 +53,7 @@
           </div>
         </div>
         {{else}}
-        <div class="proxy-list">
+        <div class="proxy-list dashboard-list">
           {{range $domain, $proxy := .Proxies}}
           <div class="proxy-item">
             <div class="proxy-info">
@@ -94,7 +97,7 @@
           </div>
         </div>
         {{else}}
-         <div class="proxy-list">
+         <div class="proxy-list dashboard-list">
            {{range .Certs}}
            <div class="proxy-item {{if .UsesWildcard}}cert-wildcard-child{{end}}">
              <div class="proxy-info">

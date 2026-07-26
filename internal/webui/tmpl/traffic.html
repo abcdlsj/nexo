@@ -6,15 +6,26 @@
       <div>
         <div class="eyebrow">Live telemetry</div>
         <h1>Traffic pulse</h1>
-        <p class="lede">A compact view of protocol adoption, active domains and the latest requests crossing Nexo.</p>
+        <p class="lede">Requests refresh every 10 seconds while this tab is visible</p>
       </div>
-      <div class="refresh-indicator flex items-center gap-2 text-sm text-muted" aria-live="polite">
-        <span id="spinner" aria-hidden="true">↻</span>
-        <span id="lastUpdate">Connecting…</span>
+      <div class="traffic-refresh">
+        <div class="refresh-indicator flex items-center gap-2 text-sm" aria-live="polite">
+          <span id="spinner" aria-hidden="true">↻</span>
+          <span id="lastUpdate">Connecting...</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="refreshButton" onclick="fetchTrafficData()">
+          <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+          Refresh
+        </button>
       </div>
     </header>
 
-    <section class="stats-grid" id="statsGrid" aria-label="Traffic summary"></section>
+    <section class="stats-grid" id="statsGrid" aria-label="Traffic summary" aria-busy="true">
+      <article class="stat-card"><div class="stat-label">Total requests</div><div class="stat-value">--</div></article>
+      <article class="stat-card"><div class="stat-label">HTTPS traffic</div><div class="stat-value">--</div></article>
+      <article class="stat-card"><div class="stat-label">Unique IPs</div><div class="stat-value">--</div></article>
+      <article class="stat-card"><div class="stat-label">Active domains</div><div class="stat-value">--</div></article>
+    </section>
 
     <section class="card mb-4">
       <div class="card-header">
@@ -49,6 +60,7 @@
 
   <script>
     var refreshInterval;
+    var refreshFailed = false;
     function formatNumber(value) { return Number(value || 0).toLocaleString(); }
     function formatPercent(value) { return (Number(value || 0) * 100).toFixed(1) + '%'; }
     function formatTime(value) { return new Date(value).toLocaleTimeString(); }
@@ -81,6 +93,7 @@
         return card;
       });
       document.getElementById('statsGrid').replaceChildren.apply(document.getElementById('statsGrid'), cards);
+      document.getElementById('statsGrid').setAttribute('aria-busy', 'false');
     }
 
     function updateDomainTable(data) {
@@ -127,9 +140,11 @@
         updateDomainTable(data);
         updateRequestsTable(data);
         document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        refreshFailed = false;
       } catch (error) {
         document.getElementById('lastUpdate').textContent = 'Refresh failed';
-        showToast('Traffic refresh failed', 'error');
+        if (!refreshFailed) showToast('Traffic refresh failed', 'error');
+        refreshFailed = true;
       } finally {
         spinner.textContent = '●';
       }

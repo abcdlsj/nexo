@@ -62,6 +62,7 @@ func newPreviewHandler() http.Handler {
 		_ = json.NewEncoder(w).Encode(trafficData)
 	}))
 	mux.HandleFunc("/favicon.ico", security((&Handler{cfg: cfg}).handleFavicon))
+	mux.HandleFunc("/favicon.svg", security((&Handler{cfg: cfg}).handleFavicon))
 	mux.HandleFunc("/", security(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			target := "/"

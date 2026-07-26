@@ -2,15 +2,13 @@
 <nav class="navbar">
   <div class="navbar-inner">
     <a href="/" class="navbar-brand">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-        <line x1="8" y1="21" x2="16" y2="21"></line>
-        <line x1="12" y1="17" x2="12" y2="21"></line>
-      </svg>
+      {{template "mark" .}}
       Nexo
     </a>
-    {{if .Demo}}<span class="demo-badge">Demo data</span>{{end}}
-    <span class="current-ip" title="Your IP">{{.CurrentIP}}</span>
+    <div class="navbar-meta">
+      {{if .Demo}}<span class="demo-badge">Demo data</span>{{end}}
+      <span class="current-ip" title="Your IP">{{.CurrentIP}}</span>
+    </div>
     <div class="navbar-nav">
       <a href="/" class="{{if eq .ActiveNav "dashboard"}}active{{end}}" {{if eq .ActiveNav "dashboard"}}aria-current="page"{{end}}>
         <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
