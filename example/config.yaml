@@ -17,6 +17,7 @@ wildcards:
 
 # WebUI configuration
 webui:
+  host: 127.0.0.1                # Loopback by default; use 0.0.0.0 only behind a trusted HTTPS gateway
   port: "8080"                    # WebUI listen port
   username: admin                 # Login username
   password: "$2a$10$xxxxx..."     # Bcrypt hashed password (generate with: make password PASSWORD=xxx)

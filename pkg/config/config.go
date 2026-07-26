@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,24 @@ type Config struct {
 	Auth       AuthConfig               `mapstructure:"auth" yaml:"auth,omitempty"`
 	Security   SecurityConfig           `mapstructure:"security" yaml:"security,omitempty"`
 	Staging    bool                     `mapstructure:"staging" yaml:"staging,omitempty"` // Use Let's Encrypt staging environment
+}
+
+// IsIPBlocked checks exact IPs and CIDR ranges from the security blacklist.
+func (c *Config) IsIPBlocked(rawIP string) bool {
+	ip, err := netip.ParseAddr(strings.TrimSpace(rawIP))
+	if err != nil {
+		return false
+	}
+	for _, entry := range c.Security.IPBlacklist {
+		entry = strings.TrimSpace(entry)
+		if prefix, err := netip.ParsePrefix(entry); err == nil && prefix.Contains(ip) {
+			return true
+		}
+		if blocked, err := netip.ParseAddr(entry); err == nil && blocked == ip {
+			return true
+		}
+	}
+	return false
 }
 
 // SecurityConfig represents security-related configuration
@@ -52,6 +71,7 @@ type GitHubAuthConfig struct {
 
 // WebUIConfig represents WebUI-specific configuration
 type WebUIConfig struct {
+	Host     string `mapstructure:"host" yaml:"host,omitempty"`         // Bind host (default: 127.0.0.1)
 	Port     string `mapstructure:"port" yaml:"port,omitempty"`         // WebUI port (default: 8080)
 	Username string `mapstructure:"username" yaml:"username,omitempty"` // WebUI login username
 	Password string `mapstructure:"password" yaml:"password,omitempty"` // WebUI login password (bcrypt hashed)
@@ -133,6 +153,11 @@ func Load(cfgFile string) (*Config, error) {
 	// but we allow it to be empty for local development/testing
 	if cfg.Cloudflare.APIToken == "" {
 		log.Warn("Cloudflare API token not configured - running in dev mode (no automatic certificates)")
+	}
+	if used := v.ConfigFileUsed(); used != "" {
+		if err := os.Chmod(used, 0600); err != nil {
+			return nil, fmt.Errorf("secure config file permissions: %v", err)
+		}
 	}
 
 	return &cfg, nil

@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25.12-alpine AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o nexo
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.23
 
 WORKDIR /app
 
@@ -38,4 +38,4 @@ VOLUME ["/etc/nexo"]
 EXPOSE 443 8080
 
 # Run the application
-ENTRYPOINT ["/app/nexo", "server"] 
+ENTRYPOINT ["/app/nexo", "server"]

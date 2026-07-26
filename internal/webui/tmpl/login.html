@@ -1,141 +1,57 @@
 {{template "head" .}}
 <body>
-  <div class="login-container">
-    <div class="login-card">
+  <main class="login-shell">
+    <section class="login-poster" aria-hidden="true">
+      <div class="eyebrow">Nexo control plane</div>
+      <div class="poster-mark">NX/<br>01</div>
+      <p>Route sharply.<br>Ship securely.</p>
+    </section>
+    <section class="login-card">
       <div class="login-header">
-        <svg class="login-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-          <line x1="8" y1="21" x2="16" y2="21"></line>
-          <line x1="12" y1="17" x2="12" y2="21"></line>
+        <svg class="login-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter">
+          <rect x="2" y="3" width="20" height="14"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line>
         </svg>
-        <h1>Nexo</h1>
-        <p class="login-subtitle">Sign in to manage your reverse proxy</p>
+        <div>
+          <div class="eyebrow">Restricted access</div>
+          <h1>Sign in</h1>
+          <p class="login-subtitle">Authenticate to manage routes, certificates and traffic.</p>
+        </div>
       </div>
-
       {{if .Error}}
-      <div class="login-error">
-        <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="15" y1="9" x2="9" y2="15"></line>
-          <line x1="9" y1="9" x2="15" y2="15"></line>
-        </svg>
-        {{.Error}}
+      <div class="login-error" role="alert">
+        <strong>Access denied.</strong> {{.Error}}
       </div>
       {{end}}
-
       <form method="POST" action="/login" class="login-form">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="redirect" value="{{.Redirect}}">
-        
         <div class="form-group">
           <label for="username">Username</label>
-          <input type="text" id="username" name="username" required autofocus placeholder="Enter username">
+          <input type="text" id="username" name="username" autocomplete="username" required autofocus placeholder="admin">
         </div>
-
         <div class="form-group">
           <label for="password">Password</label>
-          <input type="password" id="password" name="password" required placeholder="Enter password">
+          <input type="password" id="password" name="password" autocomplete="current-password" required placeholder="Your password">
         </div>
-
-        <button type="submit" class="btn btn-primary login-btn">
-          <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-            <polyline points="10 17 15 12 10 7"></polyline>
-            <line x1="15" y1="12" x2="3" y2="12"></line>
-          </svg>
-          Sign In
-        </button>
+        <button type="submit" class="btn btn-primary login-btn">Enter control plane <span aria-hidden="true">→</span></button>
       </form>
-    </div>
-  </div>
-
+    </section>
+  </main>
   <style>
-    .login-container {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 1rem;
-      background-color: var(--background);
-    }
-
-    .login-card {
-      width: 100%;
-      max-width: 400px;
-      background-color: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 2rem;
-    }
-
-    .login-header {
-      text-align: center;
-      margin-bottom: 1.5rem;
-    }
-
-    .login-logo {
-      width: 48px;
-      height: 48px;
-      color: var(--foreground);
-      margin-bottom: 1rem;
-    }
-
-    .login-header h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-      color: var(--foreground);
-    }
-
-    .login-subtitle {
-      font-size: 0.875rem;
-      color: var(--muted-foreground);
-    }
-
-    .login-error {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      background-color: rgba(239, 68, 68, 0.1);
-      color: var(--destructive);
-      border-radius: var(--radius);
-      font-size: 0.875rem;
-      margin-bottom: 1rem;
-    }
-
-    .login-form {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .login-form .form-group {
-      margin-bottom: 0;
-    }
-
-    .login-form input[type="text"],
-    .login-form input[type="password"] {
-      width: 100%;
-      padding: 0.625rem 0.875rem;
-    }
-
-    .login-btn {
-      width: 100%;
-      padding: 0.625rem 1rem;
-      margin-top: 0.5rem;
-    }
-
-    /* Dark mode adjustments */
-    [data-theme="dark"] .login-card {
-      background-color: var(--card);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme]) .login-card {
-        background-color: var(--card);
-      }
-    }
+    .login-shell { width: min(980px, calc(100% - 2rem)); min-height: 100vh; margin: 0 auto; display: grid; grid-template-columns: .9fr 1.1fr; align-items: center; gap: clamp(1rem, 5vw, 4rem); padding: 3rem 0; }
+    .login-poster { min-height: 540px; padding: 2rem; display: flex; flex-direction: column; justify-content: space-between; border: 3px solid var(--border); background: var(--secondary); color: var(--secondary-foreground); box-shadow: 9px 9px 0 var(--border); transform: rotate(-1.5deg); }
+    .poster-mark { font-family: var(--display-font); font-size: clamp(5rem, 14vw, 8.5rem); font-weight: 900; letter-spacing: -.09em; line-height: .7; }
+    .login-poster p { font-family: var(--display-font); font-size: 2rem; font-weight: 900; line-height: .95; text-transform: uppercase; }
+    .login-card { padding: clamp(1.35rem, 5vw, 2.5rem); border: 3px solid var(--border); background: var(--card); box-shadow: var(--shadow); }
+    .login-header { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: start; margin-bottom: 2rem; }
+    .login-logo { width: 52px; height: 52px; padding: .45rem; border: 3px solid var(--border); background: var(--accent); color: var(--accent-foreground); }
+    .login-header h1 { font-size: clamp(2.7rem, 8vw, 4.6rem); }
+    .login-subtitle { max-width: 38ch; margin-top: .75rem; color: var(--muted-foreground); }
+    .login-error { margin-bottom: 1.25rem; padding: .75rem; border: 3px solid var(--border); background: var(--destructive); color: var(--destructive-foreground); }
+    .login-form { display: grid; gap: .8rem; }
+    .login-form input { width: 100%; }
+    .login-btn { width: 100%; margin-top: .4rem; }
+    @media (max-width: 720px) { .login-shell { grid-template-columns: 1fr; padding: 1rem 0 2rem; } .login-poster { min-height: 180px; transform: none; } .poster-mark { font-size: 4.5rem; } .login-poster p { display: none; } }
   </style>
 </body>
 </html>

@@ -16,15 +16,16 @@ clean:
 test:
 	go test -v ./...
 
-# Generate bcrypt password hash for WebUI
-# Usage: make password PASSWORD=yourpassword
+# Generate bcrypt password hash for WebUI without exposing the password in the
+# process list or shell history.
 password:
-	@if [ -z "$(PASSWORD)" ]; then \
-		echo "Usage: make password PASSWORD=yourpassword"; \
-		exit 1; \
-	fi
-	@htpasswd -bnBC 10 "" "$(PASSWORD)" | tr -d ':\n'
-	@echo ""
+	@printf "Password: "; \
+	stty -echo; \
+	IFS= read -r password; status=$$?; \
+	stty echo; printf "\n"; \
+	[ $$status -eq 0 ] && [ -n "$$password" ] || exit 1; \
+	htpasswd -bnBC 10 "" "$$password" | tr -d ':\n'; \
+	printf "\n"
 
 # Generate secret key for OAuth session signing
 # Usage: make secret-key

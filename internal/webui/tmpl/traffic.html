@@ -1,305 +1,150 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    {{template "head" .}}
-    <title>Traffic - Nexo</title>
-    <style>
-        .traffic-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        
-        .stat-card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 1.5rem;
-        }
-        
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--foreground);
-        }
-        
-        .stat-label {
-            font-size: 0.875rem;
-            color: var(--muted-foreground);
-            margin-top: 0.25rem;
-        }
-        
-        .traffic-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .traffic-table th,
-        .traffic-table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        .traffic-table th {
-            font-weight: 600;
-            color: var(--muted-foreground);
-            font-size: 0.875rem;
-        }
-        
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-        
-        .badge-https {
-            background: var(--success);
-            color: white;
-        }
-        
-        .badge-http {
-            background: var(--warning);
-            color: white;
-        }
-        
-        .refresh-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.875rem;
-            color: var(--muted-foreground);
-        }
-        
-        .refresh-indicator .spinner {
-            width: 1rem;
-            height: 1rem;
-            border: 2px solid var(--border);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 2rem;
-        }
-        
-        .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            margin-bottom: 1.5rem;
-        }
-        
-        .card-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid var(--border);
-        }
-        
-        .card-header h2 {
-            font-size: 1.125rem;
-            font-weight: 600;
-            margin: 0;
-        }
-        
-        .card-body {
-            padding: 1rem 1.5rem;
-        }
-    </style>
-</head>
+{{template "head" .}}
 <body>
-    {{template "nav" .}}
-    
-    <main class="container">
-        <div class="page-header">
-            <h1>Traffic Statistics</h1>
-            <div class="refresh-indicator">
-                <span class="spinner" id="spinner" style="display: none;"></span>
-                <span id="lastUpdate">Last updated: just now</span>
-            </div>
+  {{template "nav" .}}
+  <main class="container">
+    <header class="page-intro">
+      <div>
+        <div class="eyebrow">Live telemetry</div>
+        <h1>Traffic pulse</h1>
+        <p class="lede">A compact view of protocol adoption, active domains and the latest requests crossing Nexo.</p>
+      </div>
+      <div class="refresh-indicator flex items-center gap-2 text-sm text-muted" aria-live="polite">
+        <span id="spinner" aria-hidden="true">↻</span>
+        <span id="lastUpdate">Connecting…</span>
+      </div>
+    </header>
+
+    <section class="stats-grid" id="statsGrid" aria-label="Traffic summary"></section>
+
+    <section class="card mb-4">
+      <div class="card-header">
+        <div>
+          <h2>Domain board</h2>
+          <p class="card-subtitle">Ranked by request volume</p>
         </div>
-        
-        <div class="traffic-grid" id="statsGrid">
-            <!-- Stats will be populated by JavaScript -->
+      </div>
+      <div class="table-scroll">
+        <table id="domainTable">
+          <thead><tr><th>Domain</th><th>Requests</th><th>HTTPS</th><th>Unique IPs</th></tr></thead>
+          <tbody id="domainTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2>Request tape</h2>
+          <p class="card-subtitle">Newest 50 requests; refreshes every 10 seconds while visible</p>
         </div>
-        
-        <div class="card">
-            <div class="card-header">
-                <h2>Domain Statistics</h2>
-            </div>
-            <div class="card-body table-scroll">
-                <table class="traffic-table" id="domainTable">
-                    <thead>
-                        <tr>
-                            <th>Domain</th>
-                            <th>Requests</th>
-                            <th>HTTPS %</th>
-                            <th>Unique IPs</th>
-                        </tr>
-                    </thead>
-                    <tbody id="domainTableBody">
-                        <!-- Populated by JavaScript -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <div class="card">
-            <div class="card-header">
-                <h2>Recent Requests</h2>
-            </div>
-            <div class="card-body table-scroll">
-                <table class="traffic-table" id="requestsTable">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Domain</th>
-                            <th>Method</th>
-                            <th>Path</th>
-                            <th>IP</th>
-                            <th>Protocol</th>
-                        </tr>
-                    </thead>
-                    <tbody id="requestsTableBody">
-                        <!-- Populated by JavaScript -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </main>
-    
-    <script>
-        let refreshInterval;
-        
-        function formatNumber(num) {
-            return num.toLocaleString();
-        }
-        
-        function formatPercent(num) {
-            return (num * 100).toFixed(1) + '%';
-        }
-        
-        function formatTime(timestamp) {
-            const date = new Date(timestamp);
-            return date.toLocaleTimeString();
-        }
-        
-        function updateStats(data) {
-            const httpsPercent = data.total_requests > 0 
-                ? data.https_requests / data.total_requests 
-                : 0;
-            
-            document.getElementById('statsGrid').innerHTML = `
-                <div class="stat-card">
-                    <div class="stat-value">${formatNumber(data.total_requests)}</div>
-                    <div class="stat-label">Total Requests</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${formatPercent(httpsPercent)}</div>
-                    <div class="stat-label">HTTPS Traffic</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${formatNumber(data.unique_ips)}</div>
-                    <div class="stat-label">Unique IPs</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">${Object.keys(data.domain_stats).length}</div>
-                    <div class="stat-label">Active Domains</div>
-                </div>
-            `;
-        }
-        
-        function updateDomainTable(data) {
-            const tbody = document.getElementById('domainTableBody');
-            const domains = Object.values(data.domain_stats)
-                .sort((a, b) => b.requests - a.requests);
-            
-            tbody.innerHTML = domains.map(d => {
-                const httpsPercent = d.requests > 0 ? d.https_count / d.requests : 0;
-                return `
-                    <tr>
-                        <td>${d.domain}</td>
-                        <td>${formatNumber(d.requests)}</td>
-                        <td>${formatPercent(httpsPercent)}</td>
-                        <td>${formatNumber(d.unique_ips)}</td>
-                    </tr>
-                `;
-            }).join('');
-        }
-        
-        function updateRequestsTable(data) {
-            const tbody = document.getElementById('requestsTableBody');
-            const records = data.records.slice(-50).reverse();
-            
-            tbody.innerHTML = records.map(r => `
-                <tr>
-                    <td>${formatTime(r.ts)}</td>
-                    <td>${r.domain}</td>
-                    <td>${r.method}</td>
-                    <td>${r.path}</td>
-                    <td>${r.ip}</td>
-                    <td>
-                        <span class="badge ${r.https ? 'badge-https' : 'badge-http'}">
-                            ${r.https ? 'HTTPS' : 'HTTP'}
-                        </span>
-                    </td>
-                </tr>
-            `).join('');
-        }
-        
-        async function fetchTrafficData() {
-            document.getElementById('spinner').style.display = 'inline-block';
-            
-            try {
-                const response = await fetch('/api/traffic');
-                const data = await response.json();
-                
-                updateStats(data);
-                updateDomainTable(data);
-                updateRequestsTable(data);
-                
-                document.getElementById('lastUpdate').textContent = 
-                    'Last updated: ' + new Date().toLocaleTimeString();
-            } catch (err) {
-                console.error('Failed to fetch traffic data:', err);
-            } finally {
-                document.getElementById('spinner').style.display = 'none';
-            }
-        }
-        
-        function startRefresh() {
-            fetchTrafficData();
-            refreshInterval = setInterval(fetchTrafficData, 5000);
-        }
-        
-        function stopRefresh() {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-            }
-        }
-        
-        // Start on page load
-        startRefresh();
-        
-        // Stop when page is hidden
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                stopRefresh();
-            } else {
-                startRefresh();
-            }
-        });
-    </script>
+      </div>
+      <div class="table-scroll">
+        <table id="requestsTable">
+          <thead><tr><th>Time</th><th>Domain</th><th>Method</th><th>Path</th><th>IP</th><th>Protocol</th></tr></thead>
+          <tbody id="requestsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    var refreshInterval;
+    function formatNumber(value) { return Number(value || 0).toLocaleString(); }
+    function formatPercent(value) { return (Number(value || 0) * 100).toFixed(1) + '%'; }
+    function formatTime(value) { return new Date(value).toLocaleTimeString(); }
+    function appendCell(row, value) {
+      var cell = document.createElement('td');
+      cell.textContent = String(value == null ? '' : value);
+      row.appendChild(cell);
+      return cell;
+    }
+    function replaceChildrenWithRows(tbody, rows) { tbody.replaceChildren.apply(tbody, rows); }
+
+    function updateStats(data) {
+      var httpsRatio = data.total_requests > 0 ? data.https_requests / data.total_requests : 0;
+      var values = [
+        ['Total requests', formatNumber(data.total_requests)],
+        ['HTTPS traffic', formatPercent(httpsRatio)],
+        ['Unique IPs', formatNumber(data.unique_ips)],
+        ['Active domains', formatNumber(Object.keys(data.domain_stats || {}).length)]
+      ];
+      var cards = values.map(function (item) {
+        var card = document.createElement('article');
+        card.className = 'stat-card';
+        var label = document.createElement('div');
+        label.className = 'stat-label';
+        label.textContent = item[0];
+        var value = document.createElement('div');
+        value.className = 'stat-value';
+        value.textContent = item[1];
+        card.append(label, value);
+        return card;
+      });
+      document.getElementById('statsGrid').replaceChildren.apply(document.getElementById('statsGrid'), cards);
+    }
+
+    function updateDomainTable(data) {
+      var domains = Object.values(data.domain_stats || {}).sort(function (a, b) { return b.requests - a.requests; });
+      var rows = domains.map(function (domain) {
+        var row = document.createElement('tr');
+        appendCell(row, domain.domain);
+        appendCell(row, formatNumber(domain.requests));
+        appendCell(row, formatPercent(domain.requests > 0 ? domain.https_count / domain.requests : 0));
+        appendCell(row, formatNumber(domain.unique_ips));
+        return row;
+      });
+      replaceChildrenWithRows(document.getElementById('domainTableBody'), rows);
+    }
+
+    function updateRequestsTable(data) {
+      var records = (data.records || []).slice(-50).reverse();
+      var rows = records.map(function (record) {
+        var row = document.createElement('tr');
+        appendCell(row, formatTime(record.ts));
+        appendCell(row, record.domain);
+        appendCell(row, record.method);
+        appendCell(row, record.path);
+        appendCell(row, record.ip);
+        var protocolCell = document.createElement('td');
+        var badge = document.createElement('span');
+        badge.className = 'badge ' + (record.https ? 'badge-https' : 'badge-http');
+        badge.textContent = record.https ? 'HTTPS' : 'HTTP';
+        protocolCell.appendChild(badge);
+        row.appendChild(protocolCell);
+        return row;
+      });
+      replaceChildrenWithRows(document.getElementById('requestsTableBody'), rows);
+    }
+
+    async function fetchTrafficData() {
+      var spinner = document.getElementById('spinner');
+      spinner.textContent = '↻';
+      try {
+        var response = await fetch('/api/traffic', { credentials: 'same-origin', cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        var data = await response.json();
+        updateStats(data);
+        updateDomainTable(data);
+        updateRequestsTable(data);
+        document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      } catch (error) {
+        document.getElementById('lastUpdate').textContent = 'Refresh failed';
+        showToast('Traffic refresh failed', 'error');
+      } finally {
+        spinner.textContent = '●';
+      }
+    }
+    function stopRefresh() {
+      if (refreshInterval) clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+    function startRefresh() {
+      stopRefresh();
+      fetchTrafficData();
+      refreshInterval = setInterval(fetchTrafficData, 10000);
+    }
+    document.addEventListener('visibilitychange', function () { document.hidden ? stopRefresh() : startRefresh(); });
+    startRefresh();
+  </script>
 </body>
 </html>

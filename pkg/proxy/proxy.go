@@ -22,9 +22,12 @@ const (
 	noCache        = "no-cache, no-store, must-revalidate"
 
 	// File extensions and content types that should use long-term caching
-	staticExtensions = ".css,.js,.woff,.woff2,.ttf,.eot"
-	staticPrefixes   = "image/,video/,audio/"
+	staticPrefixes = "image/,video/,audio/"
 )
+
+var staticExtensions = map[string]struct{}{
+	".css": {}, ".js": {}, ".woff": {}, ".woff2": {}, ".ttf": {}, ".eot": {},
+}
 
 // Config represents the configuration for a proxy
 type Config struct {
@@ -174,6 +177,15 @@ func createErrorHandler(host string, proxy *httputil.ReverseProxy) func(http.Res
 }
 
 func setCacheHeaders(r *http.Response) {
+	// Preserve intentional upstream policy. In particular, never turn private
+	// or authenticated responses into shared-cacheable content.
+	if r.Header.Get("Cache-Control") != "" {
+		return
+	}
+	if r.Request.Header.Get("Authorization") != "" || r.Header.Get("Set-Cookie") != "" {
+		r.Header.Set("Cache-Control", noCache)
+		return
+	}
 	ct := r.Header.Get("Content-Type")
 	ext := strings.ToLower(filepath.Ext(r.Request.URL.Path))
 
@@ -186,7 +198,8 @@ func setCacheHeaders(r *http.Response) {
 				return true
 			}
 		}
-		return strings.Contains(staticExtensions, ext)
+		_, ok := staticExtensions[ext]
+		return ok
 	}
 
 	isDynamic := func() bool {
@@ -207,21 +220,15 @@ func setCacheHeaders(r *http.Response) {
 	r.Header.Set("Vary", "Accept-Encoding")
 }
 
-// CheckTarget verifies if the target URL is accessible
+// CheckTarget validates a target without making a network request. Eager GETs
+// made startup and every config reload block for up to five seconds per route,
+// and could trigger side effects on upstream applications.
 func CheckTarget(u *url.URL) error {
-	c := &http.Client{
-		Timeout: 5 * time.Second,
+	if u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("target must be an absolute HTTP(S) URL")
 	}
-
-	if !strings.HasPrefix(u.Scheme, "http") && !strings.HasPrefix(u.Scheme, "https") {
-		u.Scheme = "https"
+	if u.User != nil {
+		return fmt.Errorf("target URL must not contain credentials")
 	}
-
-	r, err := c.Get(u.String())
-	if err != nil {
-		return fmt.Errorf("target not accessible: %v", err)
-	}
-	defer r.Body.Close()
-
 	return nil
 }

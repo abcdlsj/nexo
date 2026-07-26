@@ -14,6 +14,7 @@ const (
 	maxRecordsInMemory = 10000
 	dataRetentionDays  = 30
 	saveInterval       = 5 * time.Minute
+	uniqueRebuildEvery = 1000
 )
 
 // RequestRecord represents a single request record
@@ -55,6 +56,8 @@ type Manager struct {
 	recordChan chan RequestRecord
 	stopChan   chan struct{}
 	mu         sync.RWMutex
+	evictions  int
+	stopOnce   sync.Once
 }
 
 // NewManager creates a new traffic manager
@@ -84,6 +87,11 @@ func NewManager(dataDir string) *Manager {
 
 // Record records a new request
 func (m *Manager) Record(r RequestRecord) {
+	r.Domain = truncate(r.Domain, 253)
+	r.IP = truncate(r.IP, 64)
+	r.Method = truncate(r.Method, 16)
+	r.Path = truncate(r.Path, 2048)
+	r.UserAgent = truncate(r.UserAgent, 512)
 	select {
 	case m.recordChan <- r:
 	default:
@@ -112,6 +120,11 @@ func (m *Manager) addRecord(r RequestRecord) {
 	m.data.Records = append(m.data.Records, r)
 	if len(m.data.Records) > maxRecordsInMemory {
 		m.data.Records = m.data.Records[len(m.data.Records)-maxRecordsInMemory:]
+		m.evictions++
+		if m.evictions >= uniqueRebuildEvery {
+			m.rebuildUniqueIPsLocked()
+			m.evictions = 0
+		}
 	}
 
 	// Update stats
@@ -144,14 +157,52 @@ func (m *Manager) addRecord(r RequestRecord) {
 	stats.UniqueIPCount = len(stats.UniqueIPs)
 }
 
+func (m *Manager) rebuildUniqueIPsLocked() {
+	m.data.UniqueIPs = make(map[string]bool)
+	for _, stats := range m.data.DomainStats {
+		stats.UniqueIPs = make(map[string]bool)
+		stats.UniqueIPCount = 0
+	}
+	for _, record := range m.data.Records {
+		m.data.UniqueIPs[record.IP] = true
+		if stats := m.data.DomainStats[record.Domain]; stats != nil {
+			stats.UniqueIPs[record.IP] = true
+			stats.UniqueIPCount = len(stats.UniqueIPs)
+		}
+	}
+	m.data.UniqueIPCount = len(m.data.UniqueIPs)
+}
+
+func truncate(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
+}
+
 // GetData returns a copy of the traffic data
 func (m *Manager) GetData() *TrafficData {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.snapshotLocked(len(m.data.Records))
+}
 
-	// Return a copy
-	copy := &TrafficData{
-		Records:       make([]RequestRecord, len(m.data.Records)),
+// GetRecentData returns aggregate stats plus only the newest records. The WebUI
+// never renders the full retention buffer, so this avoids copying and encoding
+// thousands of unused entries on every poll.
+func (m *Manager) GetRecentData(limit int) *TrafficData {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.snapshotLocked(limit)
+}
+
+func (m *Manager) snapshotLocked(limit int) *TrafficData {
+	start := 0
+	if limit >= 0 && len(m.data.Records) > limit {
+		start = len(m.data.Records) - limit
+	}
+	snapshot := &TrafficData{
+		Records:       append([]RequestRecord(nil), m.data.Records[start:]...),
 		DomainStats:   make(map[string]*DomainStats),
 		TotalReqs:     m.data.TotalReqs,
 		HTTPSReqs:     m.data.HTTPSReqs,
@@ -159,10 +210,8 @@ func (m *Manager) GetData() *TrafficData {
 		LastSaved:     m.data.LastSaved,
 	}
 
-	copy.Records = append(copy.Records[:0], m.data.Records...)
-
 	for k, v := range m.data.DomainStats {
-		copy.DomainStats[k] = &DomainStats{
+		snapshot.DomainStats[k] = &DomainStats{
 			Domain:        v.Domain,
 			Requests:      v.Requests,
 			HTTPSCount:    v.HTTPSCount,
@@ -170,31 +219,25 @@ func (m *Manager) GetData() *TrafficData {
 		}
 	}
 
-	return copy
+	return snapshot
 }
 
 // saveData saves data to file
 func (m *Manager) saveData() error {
-	m.mu.RLock()
+	m.mu.Lock()
 	m.data.LastSaved = time.Now()
-	data := *m.data
-	m.mu.RUnlock()
-
-	// Clean up internal maps before saving
-	data.UniqueIPs = nil
-	for _, stats := range data.DomainStats {
-		stats.UniqueIPs = nil
-	}
+	data := m.snapshotLocked(len(m.data.Records))
+	m.mu.Unlock()
 
 	filename := filepath.Join(m.dataDir, "traffic.json")
 	tmpFile := filename + ".tmp"
 
-	jsonData, err := json.MarshalIndent(data, "", "  ")
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(tmpFile, jsonData, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, jsonData, 0600); err != nil {
 		return err
 	}
 
@@ -292,5 +335,5 @@ func (m *Manager) periodicSave() {
 
 // Stop stops the manager
 func (m *Manager) Stop() {
-	close(m.stopChan)
+	m.stopOnce.Do(func() { close(m.stopChan) })
 }

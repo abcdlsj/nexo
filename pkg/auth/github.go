@@ -15,6 +15,7 @@ const (
 	githubAuthorizeURL = "https://github.com/login/oauth/authorize"
 	githubTokenURL     = "https://github.com/login/oauth/access_token"
 	githubUserURL      = "https://api.github.com/user"
+	maxGitHubResponse  = 1 << 20
 )
 
 // GitHubProvider handles GitHub OAuth flow
@@ -86,7 +87,7 @@ func (p *GitHubProvider) getAccessToken(ctx context.Context, code string) (strin
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubResponse))
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +131,7 @@ func (p *GitHubProvider) getUserInfo(ctx context.Context, token string) (string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxGitHubResponse))
 		return "", fmt.Errorf("github API error: %s - %s", resp.Status, string(body))
 	}
 

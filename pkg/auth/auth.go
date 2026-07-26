@@ -93,6 +93,14 @@ func (m *Manager) isAllowedHost(host string) bool {
 	return slices.Contains(m.cfg.AllowedHosts, host)
 }
 
+func (m *Manager) validateRedirect(raw string) (*url.URL, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return nil, false
+	}
+	return u, m.isAllowedHost(strings.ToLower(u.Host))
+}
+
 // SessionToken represents a signed session token stored in cookie
 type SessionToken struct {
 	User      string `json:"user"`
@@ -145,7 +153,7 @@ func (m *Manager) RefreshSession(w http.ResponseWriter, user string) {
 // IsUserAllowed checks if the user is in the allowed list
 func (m *Manager) IsUserAllowed(user string) bool {
 	if len(m.cfg.GitHub.AllowedUsers) == 0 {
-		return true
+		return false
 	}
 	return slices.Contains(m.cfg.GitHub.AllowedUsers, user)
 }
@@ -183,16 +191,9 @@ func (m *Manager) handleStart(w http.ResponseWriter, r *http.Request, host strin
 	}
 
 	// Validate redirect URL to prevent open redirect
-	redirectURL, err := url.Parse(redirect)
-	if err != nil {
+	redirectURL, ok := m.validateRedirect(redirect)
+	if !ok {
 		http.Error(w, "Invalid redirect URL", http.StatusBadRequest)
-		return
-	}
-
-	// Check if redirect host is allowed
-	if !m.isAllowedHost(redirectURL.Host) {
-		log.Warn("Redirect to unauthorized host blocked", "host", redirectURL.Host)
-		http.Error(w, "Redirect URL not allowed", http.StatusBadRequest)
 		return
 	}
 
@@ -241,8 +242,8 @@ func (m *Manager) handleCallback(w http.ResponseWriter, r *http.Request) {
 	log.Info("User authenticated", "user", user)
 
 	// Parse redirect URL to determine target domain
-	redirectURL, err := url.Parse(redirect)
-	if err != nil {
+	redirectURL, ok := m.validateRedirect(redirect)
+	if !ok {
 		http.Error(w, "Invalid redirect URL", http.StatusBadRequest)
 		return
 	}
@@ -283,8 +284,8 @@ func (m *Manager) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract host from redirect URL for cookie domain
-	redirectURL, err := url.Parse(token.RedirectURL)
-	if err != nil {
+	redirectURL, ok := m.validateRedirect(token.RedirectURL)
+	if !ok || !strings.EqualFold(redirectURL.Host, r.Host) {
 		http.Error(w, "Invalid redirect URL", http.StatusBadRequest)
 		return
 	}
@@ -313,7 +314,7 @@ func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
 		redirect = "/"
 	} else {
 		// Validate redirect URL to prevent open redirect
-		if redirectURL, err := url.Parse(redirect); err != nil || !m.isAllowedHost(redirectURL.Host) {
+		if _, ok := m.validateRedirect(redirect); !ok {
 			redirect = "/"
 		}
 	}
@@ -456,7 +457,8 @@ func (m *Manager) verifyState(state string) (string, error) {
 		return "", fmt.Errorf("invalid timestamp")
 	}
 
-	if time.Now().Unix()-ts > 600 {
+	now := time.Now().Unix()
+	if ts > now+60 || now-ts > 600 {
 		return "", fmt.Errorf("state expired")
 	}
 

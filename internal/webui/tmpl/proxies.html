@@ -3,13 +3,13 @@
   {{template "nav" .}}
 
   <div class="container">
-    <div class="section-header">
-      <h1>Proxies</h1>
-    </div>
+    <header class="page-intro">
+      <div><div class="eyebrow">Routing table</div><h1>Routes</h1><p class="lede">Connect a domain to an upstream or issue a clean HTTPS redirect.</p></div>
+    </header>
 
     <!-- Add Proxy Card -->
     <div class="card mb-4">
-      <h3 style="margin-bottom: 1rem;">Add New Proxy</h3>
+      <div class="card-header"><div><h2>Add route</h2><p class="card-subtitle">Domain + destination + optional OAuth gate</p></div></div>
       <form method="POST" action="/proxies/add">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <div class="grid-2">

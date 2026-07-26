@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -39,12 +40,11 @@ func NewRateLimiter(cfg *RateLimitConfig) *RateLimiter {
 
 // Allow checks if the IP is allowed to make a request
 func (rl *RateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
 	if !rl.config.Enabled {
 		return true
 	}
-
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
 
 	v, exists := rl.visitors[ip]
 	if !exists {
@@ -59,6 +59,14 @@ func (rl *RateLimiter) Allow(ip string) bool {
 
 	v.lastSeen = time.Now()
 	return v.limiter.Allow()
+}
+
+// UpdateConfig replaces limiter settings without racing active requests.
+func (rl *RateLimiter) UpdateConfig(cfg RateLimitConfig) {
+	rl.mu.Lock()
+	rl.config = &cfg
+	rl.visitors = make(map[string]*visitor)
+	rl.mu.Unlock()
 }
 
 // Middleware returns an HTTP middleware for rate limiting
@@ -91,52 +99,11 @@ func (rl *RateLimiter) cleanupVisitors() {
 
 // getClientIP extracts client IP from request
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := findComma(xff); idx != -1 {
-			return trimSpace(xff[:idx])
-		}
-		return xff
+	// The WebUI listener is directly exposed. Trusting arbitrary forwarding
+	// headers here lets attackers rotate fake IPs and bypass login throttling.
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	ip, _, _ := splitHostPort(r.RemoteAddr)
 	return ip
-}
-
-// Helper functions to avoid importing strings package
-func findComma(s string) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == ',' {
-			return i
-		}
-	}
-	return -1
-}
-
-func trimSpace(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
-}
-
-func splitHostPort(hostport string) (host, port string, err error) {
-	// Simple implementation
-	for i := len(hostport) - 1; i >= 0; i-- {
-		if hostport[i] == ':' {
-			return hostport[:i], hostport[i+1:], nil
-		}
-	}
-	return hostport, "", nil
 }

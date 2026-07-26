@@ -59,9 +59,6 @@ const domainNotConfiguredHTML = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>404 Not Found</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
             --background: #fafafa;
@@ -98,7 +95,7 @@ const domainNotConfiguredHTML = `<!DOCTYPE html>
         }
 
         body {
-            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
             background-color: var(--background);
             color: var(--foreground);
             line-height: 1.6;
@@ -153,7 +150,7 @@ const domainNotConfiguredHTML = `<!DOCTYPE html>
         }
 
         .domain {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'SFMono-Regular', Consolas, monospace;
             background-color: var(--muted);
             padding: 0.5rem 1rem;
             border-radius: var(--radius);
@@ -353,10 +350,7 @@ func (s *Server) Start() error {
 	// Start WebUI server first (in background)
 	go s.startWebUI()
 
-	// Wait for WebUI to be ready
-	time.Sleep(3 * time.Second)
-
-	// Then load proxies (so WebUI upstream is accessible)
+	// Proxy validation is local and does not depend on the WebUI listener.
 	if err := s.loadProxies(false); err != nil {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
@@ -388,25 +382,43 @@ func (s *Server) startWebUI() {
 	mux := http.NewServeMux()
 	webuiHandler.RegisterRoutes(mux)
 
-	webuiPort := ":8080"
-	if s.cfg.WebUI.Port != "" {
-		webuiPort = ":" + s.cfg.WebUI.Port
+	webuiHost := strings.TrimSpace(s.cfg.WebUI.Host)
+	if webuiHost == "" {
+		webuiHost = "127.0.0.1"
 	}
+	if s.cfg.WebUI.Password == "" && !isLoopbackHost(webuiHost) {
+		log.Warn("Refusing to expose passwordless WebUI; binding to loopback", "configured_host", webuiHost)
+		webuiHost = "127.0.0.1"
+	}
+	webuiPort := s.cfg.WebUI.Port
+	if webuiPort == "" {
+		webuiPort = "8080"
+	}
+	webuiAddr := net.JoinHostPort(webuiHost, webuiPort)
 
-	log.Info("Starting WebUI", "addr", webuiPort)
+	log.Info("Starting WebUI", "addr", webuiAddr)
 
 	srv := &http.Server{
-		Addr:              webuiPort,
+		Addr:              webuiAddr,
 		Handler:           mux,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("WebUI server error", "err", err)
 	}
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) createTLSConfig() *tls.Config {
@@ -570,14 +582,19 @@ func (s *Server) handleHTTPS() http.Handler {
 		// Add security headers
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("X-XSS-Protection", "1; mode=block")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 
 		host := s.extractHost(r)
 		if host == "" {
 			http.Error(w, "Invalid host", http.StatusBadRequest)
+			return
+		}
+		if s.cfg.IsIPBlocked(s.getClientIP(r)) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 
@@ -629,21 +646,10 @@ func (s *Server) handleHTTPS() http.Handler {
 }
 
 func (s *Server) getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return xff
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
-
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return ip
 }
 
@@ -782,7 +788,7 @@ func (s *Server) createProxyHandler(domain string, cfg *proxy.Config) (*proxy.Ha
 	}
 
 	if err := proxy.CheckTarget(u); err != nil {
-		return nil, fmt.Errorf("upstream not accessible for %s: %v", domain, err)
+		return nil, fmt.Errorf("invalid target for %s: %v", domain, err)
 	}
 
 	if err := s.handleCertObtain(domain, false); err != nil {
@@ -809,7 +815,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 	}
 
 	if err := proxy.CheckTarget(u); err != nil {
-		return fmt.Errorf("upstream not accessible for %s: %v", domain, err)
+		return fmt.Errorf("invalid target for %s: %v", domain, err)
 	}
 
 	if err := s.handleCertObtain(domain, false); err != nil {
@@ -956,7 +962,7 @@ func (s *Server) setupConfigWatcher() error {
 				if !ok {
 					return
 				}
-				if event.Name == s.cfgPath && event.Op&fsnotify.Write == fsnotify.Write {
+				if event.Name == s.cfgPath && event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 					log.Info("Config file modified, reloading configuration")
 					if err := s.Reload(); err != nil {
 						log.Error("Failed to reload configuration", "err", err)
@@ -988,7 +994,9 @@ func (s *Server) Reload() error {
 		return fmt.Errorf("failed to reload config: %v", err)
 	}
 
-	s.cfg = newCfg
+	// Keep the config pointer stable because the WebUI shares it. Replacing the
+	// pointer made the UI continue rendering and overwriting stale settings.
+	*s.cfg = *newCfg
 	if err := s.loadProxies(true); err != nil {
 		return fmt.Errorf("failed to load proxies: %v", err)
 	}
@@ -1038,5 +1046,26 @@ func saveConfig(cfg *config.Config, cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	return os.WriteFile(cfgPath, data, 0644)
+	tmp, err := os.CreateTemp(filepath.Dir(cfgPath), ".nexo-config-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, cfgPath)
 }

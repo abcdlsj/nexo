@@ -14,7 +14,9 @@ import (
 	"encoding/pem"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,6 +33,11 @@ import (
 	"github.com/charmbracelet/log"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	maxWebUIRequestSize   = 1 << 20 // 1 MiB is ample for all management forms.
+	trafficAPIRecordLimit = 100
 )
 
 var (
@@ -97,41 +104,60 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Public routes
-	mux.HandleFunc("/login", h.handleLogin)
-	mux.HandleFunc("/logout", h.handleLogout)
-	mux.HandleFunc("/favicon.ico", h.handleFavicon)
+	mux.HandleFunc("/login", h.securityMiddleware(h.handleLogin))
+	mux.HandleFunc("/favicon.ico", h.securityMiddleware(h.handleFavicon))
 
 	// Protected routes - wrap with auth middleware
-	mux.HandleFunc("/", h.authMiddleware(h.handleDashboard))
-	mux.HandleFunc("/proxies", h.authMiddleware(h.handleProxies))
-	mux.HandleFunc("/proxies/add", h.authMiddleware(h.handleAddProxy))
-	mux.HandleFunc("/proxies/delete", h.authMiddleware(h.handleDeleteProxy))
-	mux.HandleFunc("/certs", h.authMiddleware(h.handleCerts))
-	mux.HandleFunc("/certs/renew", h.authMiddleware(h.handleRenewCert))
-	mux.HandleFunc("/config", h.authMiddleware(h.handleConfig))
-	mux.HandleFunc("/config/update", h.authMiddleware(h.handleUpdateConfig))
-	mux.HandleFunc("/config/wildcard/add", h.authMiddleware(h.handleAddWildcard))
-	mux.HandleFunc("/config/wildcard/delete", h.authMiddleware(h.handleDeleteWildcard))
-	mux.HandleFunc("/config/secret-key/regenerate", h.authMiddleware(h.handleRegenerateSecretKey))
-	mux.HandleFunc("/config/security/update", h.authMiddleware(h.handleUpdateSecurity))
+	protected := func(next http.HandlerFunc) http.HandlerFunc {
+		return h.securityMiddleware(h.authMiddleware(next))
+	}
+	mux.HandleFunc("/", protected(h.handleDashboard))
+	mux.HandleFunc("/logout", protected(h.handleLogout))
+	mux.HandleFunc("/proxies", protected(h.handleProxies))
+	mux.HandleFunc("/proxies/add", protected(h.handleAddProxy))
+	mux.HandleFunc("/proxies/delete", protected(h.handleDeleteProxy))
+	mux.HandleFunc("/certs", protected(h.handleCerts))
+	mux.HandleFunc("/certs/renew", protected(h.handleRenewCert))
+	mux.HandleFunc("/config", protected(h.handleConfig))
+	mux.HandleFunc("/config/update", protected(h.handleUpdateConfig))
+	mux.HandleFunc("/config/wildcard/add", protected(h.handleAddWildcard))
+	mux.HandleFunc("/config/wildcard/delete", protected(h.handleDeleteWildcard))
+	mux.HandleFunc("/config/secret-key/regenerate", protected(h.handleRegenerateSecretKey))
+	mux.HandleFunc("/config/security/update", protected(h.handleUpdateSecurity))
 
 	// Traffic routes
-	mux.HandleFunc("/traffic", h.authMiddleware(h.handleTraffic))
-	mux.HandleFunc("/api/traffic", h.authMiddleware(h.handleTrafficAPI))
+	mux.HandleFunc("/traffic", protected(h.handleTraffic))
+	mux.HandleFunc("/api/traffic", protected(h.handleTrafficAPI))
+}
+
+func (h *Handler) securityMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Cache-Control", "no-store")
+		if h.cfg != nil && h.cfg.IsIPBlocked(getClientIP(r)) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, maxWebUIRequestSize)
+		}
+		next(w, r)
+	}
 }
 
 // authMiddleware checks if user is authenticated and validates CSRF for POST
 func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.cfg.WebUI.Password == "" {
-			next(w, r)
-			return
-		}
-
-		cookie, err := r.Cookie("nexo_session")
-		if err != nil || !h.validateSession(cookie.Value) {
-			http.Redirect(w, r, "/login?redirect="+r.URL.Path, http.StatusSeeOther)
-			return
+		if h.cfg.WebUI.Password != "" {
+			cookie, err := r.Cookie("nexo_session")
+			if err != nil || !h.validateSession(cookie.Value) {
+				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(safeLocalRedirect(r.URL.RequestURI())), http.StatusSeeOther)
+				return
+			}
 		}
 
 		// CSRF validation for state-changing requests
@@ -170,13 +196,14 @@ func (h *Handler) validateSession(token string) bool {
 	if err != nil {
 		return false
 	}
-	if time.Now().Unix()-ts > 86400 {
+	now := time.Now().Unix()
+	if ts > now+60 || now-ts > 86400 {
 		return false
 	}
 
 	// Verify HMAC signature using password as key
 	data := timestamp + ":" + nonce
-	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac := hmac.New(sha256.New, h.csrfKey())
 	mac.Write([]byte(data))
 	expectedSig := hex.EncodeToString(mac.Sum(nil))
 
@@ -198,7 +225,7 @@ func (h *Handler) generateSessionToken() string {
 
 	// Token format: timestamp:nonce:signature
 	data := timestamp + ":" + nonceStr
-	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac := hmac.New(sha256.New, h.csrfKey())
 	mac.Write([]byte(data))
 	signature := hex.EncodeToString(mac.Sum(nil))
 
@@ -237,9 +264,30 @@ func (h *Handler) getOrCreateCSRFToken(w http.ResponseWriter, r *http.Request) s
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteStrictMode,
+		MaxAge:   86400,
 	})
 	return token
+}
+
+func (h *Handler) csrfKey() []byte {
+	if h.cfg.WebUI.Password != "" {
+		return []byte(h.cfg.WebUI.Password)
+	}
+	return []byte(h.cfg.Auth.SecretKey)
+}
+
+func requestIsSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func safeLocalRedirect(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
+		return "/"
+	}
+	return u.RequestURI()
 }
 
 func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
@@ -254,6 +302,11 @@ func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
 
 // handleLogin handles login page and form submission
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	// If no password is configured, redirect to home
 	if h.cfg.WebUI.Password == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -281,7 +334,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Config:    h.cfg,
 			CSRFToken: csrfToken,
 		},
-		Redirect: r.URL.Query().Get("redirect"),
+		Redirect: safeLocalRedirect(r.URL.Query().Get("redirect")),
 	}
 
 	if r.Method == http.MethodPost {
@@ -296,10 +349,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		username := r.FormValue("username")
 		password := r.FormValue("password")
-		redirect := r.FormValue("redirect")
-		if redirect == "" {
-			redirect = "/"
-		}
+		redirect := safeLocalRedirect(r.FormValue("redirect"))
 
 		// Check if account is locked
 		if allowed, lockDuration := h.checkLoginAllowed(clientIP, username); !allowed {
@@ -316,6 +366,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Value:    h.generateSessionToken(),
 				Path:     "/",
 				HttpOnly: true,
+				Secure:   requestIsSecure(r),
 				SameSite: http.SameSiteStrictMode,
 				MaxAge:   86400, // 24 hours
 			})
@@ -352,11 +403,17 @@ func (h *Handler) validateCredentials(username, password string) bool {
 
 // handleLogout handles logout
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "nexo_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   requestIsSecure(r),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
@@ -368,6 +425,7 @@ type PageData struct {
 	Config    *config.Config
 	CSRFToken string
 	CurrentIP string
+	Demo      bool
 }
 
 func (h *Handler) render404(w http.ResponseWriter) {
@@ -463,26 +521,29 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 	domain := strings.TrimSpace(r.FormValue("domain"))
 	proxyType := r.FormValue("type")
 
-	if domain == "" {
-		http.Redirect(w, r, "/proxies", http.StatusSeeOther)
+	if !validDomain(domain, false) {
+		http.Redirect(w, r, "/proxies?error=invalid_domain", http.StatusSeeOther)
 		return
 	}
 
 	cfg := &proxy.Config{}
 	if proxyType == "proxy" {
 		upstream := strings.TrimSpace(r.FormValue("upstream"))
-		if upstream == "" {
-			http.Redirect(w, r, "/proxies", http.StatusSeeOther)
+		if !validHTTPURL(upstream) {
+			http.Redirect(w, r, "/proxies?error=invalid_upstream", http.StatusSeeOther)
 			return
 		}
 		cfg.Upstream = upstream
-	} else {
+	} else if proxyType == "redirect" {
 		redirect := strings.TrimSpace(r.FormValue("redirect"))
-		if redirect == "" {
-			http.Redirect(w, r, "/proxies", http.StatusSeeOther)
+		if !validHTTPURL(proxy.EnsureSchema(redirect)) {
+			http.Redirect(w, r, "/proxies?error=invalid_redirect", http.StatusSeeOther)
 			return
 		}
 		cfg.Redirect = redirect
+	} else {
+		http.Redirect(w, r, "/proxies?error=invalid_proxy_type", http.StatusSeeOther)
+		return
 	}
 
 	cfg.Auth = r.FormValue("auth") == "on"
@@ -632,7 +693,7 @@ func (h *Handler) handleAddWildcard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wildcard := strings.TrimSpace(r.FormValue("wildcard"))
-	if wildcard != "" && strings.HasPrefix(wildcard, "*.") {
+	if validDomain(wildcard, true) {
 		if !slices.Contains(h.cfg.Wildcards, wildcard) {
 			h.cfg.Wildcards = append(h.cfg.Wildcards, wildcard)
 			if err := h.saveAndReload(); err != nil {
@@ -700,6 +761,11 @@ func (h *Handler) handleRegenerateSecretKey(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	data, err := tmplFS.ReadFile("tmpl/nexon.ico")
 	if err != nil {
 		log.Error("Failed to read favicon", "err", err)
@@ -707,6 +773,7 @@ func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/x-icon")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(data)
 }
 
@@ -822,7 +889,7 @@ func (h *Handler) saveAndReload() error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(h.cfgPath, data, 0644); err != nil {
+	if err := writeFileAtomic(h.cfgPath, data, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if h.onChange != nil {
@@ -947,9 +1014,11 @@ func (h *Handler) handleUpdateSecurity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update rate limiter config
-	h.rateLimiter.config.Enabled = h.cfg.Security.RateLimitEnabled
-	h.rateLimiter.config.Requests = h.cfg.Security.RateLimitRequests
-	h.rateLimiter.config.Window = time.Duration(h.cfg.Security.RateLimitWindow) * time.Second
+	h.rateLimiter.UpdateConfig(RateLimitConfig{
+		Enabled:  h.cfg.Security.RateLimitEnabled,
+		Requests: h.cfg.Security.RateLimitRequests,
+		Window:   time.Duration(h.cfg.Security.RateLimitWindow) * time.Second,
+	})
 
 	if err := h.saveAndReload(); err != nil {
 		log.Error("Failed to save security config", "err", err)
@@ -976,18 +1045,84 @@ func (h *Handler) handleTraffic(w http.ResponseWriter, r *http.Request) {
 
 // handleTrafficAPI returns traffic data as JSON
 func (h *Handler) handleTrafficAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if h.trafficMgr == nil {
 		http.Error(w, "Traffic tracking not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	data := h.trafficMgr.GetData()
+	data := h.trafficMgr.GetRecentData(trafficAPIRecordLimit)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Error("Failed to encode traffic data", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+func validHTTPURL(raw string) bool {
+	u, err := url.ParseRequestURI(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil
+}
+
+func validDomain(domain string, wildcard bool) bool {
+	if wildcard {
+		if !strings.HasPrefix(domain, "*.") {
+			return false
+		}
+		domain = strings.TrimPrefix(domain, "*.")
+	} else if strings.HasPrefix(domain, "*.") {
+		return false
+	}
+	domain = strings.TrimSuffix(strings.ToLower(domain), ".")
+	if len(domain) == 0 || len(domain) > 253 || net.ParseIP(domain) != nil {
+		return false
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".nexo-config-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func maskAPIToken(token string) string {
@@ -1001,17 +1136,37 @@ func maskAPIToken(token string) string {
 }
 
 func maskSensitiveConfig(raw string) string {
-	sensitiveKeys := []string{"api_token:", "secret_key:", "client_secret:", "password:"}
-	lines := strings.Split(raw, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		for _, key := range sensitiveKeys {
-			if strings.HasPrefix(trimmed, key) {
-				idx := strings.Index(line, key)
-				lines[i] = line[:idx+len(key)] + " \"••••••••\""
-				break
-			}
-		}
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &document); err != nil {
+		return "# Configuration unavailable: invalid YAML"
 	}
-	return strings.Join(lines, "\n")
+	maskSensitiveYAML(&document)
+	masked, err := yaml.Marshal(&document)
+	if err != nil {
+		return "# Configuration unavailable"
+	}
+	return string(masked)
+}
+
+func maskSensitiveYAML(node *yaml.Node) {
+	sensitive := map[string]bool{
+		"api_token": true, "secret_key": true, "client_secret": true, "password": true,
+	}
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key, value := node.Content[i], node.Content[i+1]
+			if sensitive[strings.ToLower(strings.TrimSpace(key.Value))] {
+				value.Kind = yaml.ScalarNode
+				value.Tag = "!!str"
+				value.Value = "••••••••"
+				value.Content = nil
+				continue
+			}
+			maskSensitiveYAML(value)
+		}
+		return
+	}
+	for _, child := range node.Content {
+		maskSensitiveYAML(child)
+	}
 }

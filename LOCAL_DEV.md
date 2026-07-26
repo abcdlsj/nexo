@@ -16,8 +16,10 @@ email: dev@localhost
 base_dir: ~/nexo-dev
 cert_dir: ~/nexo-dev/certs
 
-# WebUI 端口
-webui_port: 8080
+# WebUI（默认只监听本机）
+webui:
+  host: 127.0.0.1
+  port: "8080"
 
 # Cloudflare 设置（本地开发可留空，使用自签名证书）
 cloudflare:
@@ -139,8 +141,10 @@ email: your-email@example.com
 base_dir: /etc/nexo
 cert_dir: /etc/nexo/certs
 
-# WebUI 端口
-webui_port: 8080
+# WebUI（默认只监听本机）
+webui:
+  host: 127.0.0.1
+  port: "8080"
 
 # 开发模式
 staging: false  # 设为 true 使用 Let's Encrypt staging
