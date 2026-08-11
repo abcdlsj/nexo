@@ -45,6 +45,9 @@ proxies:
   api.example.com:
     upstream: http://localhost:8080
     auth: false
+    # response_header_timeout: "30s"  # wait for upstream response headers; "0" waits indefinitely
+    # write_timeout: "2m"             # total response write cap; empty/"0" disables
+    # retry: true                     # retry once before response starts, idempotent methods only
 
   # Main website
   www.example.com:

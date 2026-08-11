@@ -135,6 +135,27 @@ proxies:
     upstream: http://127.0.0.1:3000
 ```
 
+Streaming routes (SSE, long-lived responses) work out of the box because Nexo
+does not cap the total response write time by default. Optional per-route
+timeouts are available for routes that need them:
+
+```yaml
+proxies:
+  api.example.com:
+    upstream: http://127.0.0.1:3000
+    # write_timeout: "2m"             # total response write cap; empty/"0" = unlimited
+    # response_header_timeout: "30s"  # wait for upstream headers; "0" = wait indefinitely
+    # retry: true                     # retry once on pre-response errors (GET/HEAD/OPTIONS only)
+```
+
+- `write_timeout` and `response_header_timeout` accept Go duration strings
+  (e.g. `5m`, `30s`). A global `write_timeout` at the top level applies to all
+  routes unless a route overrides it; both default to disabled.
+- `retry` is opt-in and safe by construction: it retries only idempotent
+  methods and never re-sends POST/PUT/PATCH bodies.
+- Avoid `write_timeout` on WebSocket routes; a total write cap is incompatible
+  with hijacked long-lived connections.
+
 ### HTTPS redirect
 
 ```yaml

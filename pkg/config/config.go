@@ -24,6 +24,11 @@ type Config struct {
 	Auth       AuthConfig               `mapstructure:"auth" yaml:"auth,omitempty"`
 	Security   SecurityConfig           `mapstructure:"security" yaml:"security,omitempty"`
 	Staging    bool                     `mapstructure:"staging" yaml:"staging,omitempty"` // Use Let's Encrypt staging environment
+
+	// WriteTimeout optionally caps the total response write time for all routes.
+	// Accepts Go duration strings (e.g. "2m"); empty or "0" disables the cap.
+	// Routes can override this with their own write_timeout.
+	WriteTimeout string `mapstructure:"write_timeout" yaml:"write_timeout,omitempty"`
 }
 
 // IsIPBlocked checks exact IPs and CIDR ranges from the security blacklist.

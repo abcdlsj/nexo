@@ -35,7 +35,6 @@ import (
 const (
 	// Server timeouts
 	readTimeout       = 30 * time.Second
-	writeTimeout      = 120 * time.Second
 	idleTimeout       = 620 * time.Second // Must be > Cloudflare's keep-alive (~300-600s) to avoid stale connection 520s
 	readHeaderTimeout = 10 * time.Second
 
@@ -359,7 +358,7 @@ func (s *Server) Start() error {
 		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
 		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
+		WriteTimeout:      proxy.ParseDuration(s.cfg.WriteTimeout, 0),
 		IdleTimeout:       idleTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
 		MaxHeaderBytes:    maxHeaderSize,
@@ -624,6 +623,23 @@ func (s *Server) handleHTTPS() http.Handler {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(domainNotConfiguredHTML))
 			return
+		}
+
+		// Apply an explicit per-route write deadline. Routes without one keep
+		// the server-level setting (disabled by default, so streaming works).
+		if cfg != nil {
+			if d, ok := h.WriteDeadline(); ok {
+				controller := http.NewResponseController(w)
+				var errDeadline error
+				if d > 0 {
+					errDeadline = controller.SetWriteDeadline(time.Now().Add(d))
+				} else {
+					errDeadline = controller.SetWriteDeadline(time.Time{})
+				}
+				if errDeadline != nil {
+					log.Warn("Failed to apply route write deadline", "domain", host, "err", errDeadline)
+				}
+			}
 		}
 
 		// Check authentication if required
