@@ -158,20 +158,16 @@ func (h *Handler) handleRouteIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := routeDiscoveryResult{Kind: "SERVICE"}
+	result := routeDiscoveryResult{}
 	if h.routeDiscovery != nil {
 		result = h.routeDiscovery.discover(r.Context(), domain, cfg)
-	}
-	if cfg.Portal != nil {
-		if kind := normalizeRouteKind(cfg.Portal.Kind); kind != "" {
-			result.Kind = kind
-		}
 	}
 	body := result.Icon
 	contentType := result.IconContentType
 	if len(body) == 0 || contentType == "" {
-		body = fallbackRouteIcon(result.Kind)
-		contentType = "image/svg+xml"
+		w.Header().Set("Cache-Control", "private, max-age=120")
+		http.NotFound(w, r)
+		return
 	}
 
 	w.Header().Set("Content-Type", contentType)
@@ -394,19 +390,6 @@ func imageContentType(header string, body []byte) string {
 		return mediaType(detected)
 	}
 	return ""
-}
-
-func fallbackRouteIcon(kind string) []byte {
-	var glyph string
-	switch normalizeRouteKind(kind) {
-	case "API":
-		glyph = `<path d="M8 8 4 12l4 4M16 8l4 4-4 4M14 5l-4 14"/>`
-	case "WEBSITE":
-		glyph = `<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2 2.2 3 4.8 3 8s-1 5.8-3 8c-2-2.2-3-4.8-3-8s1-5.8 3-8Z"/>`
-	default:
-		glyph = `<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m8.5 10 3.5 2 3.5-2M12 12v4"/>`
-	}
-	return []byte(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#1457d9" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">%s</svg>`, glyph))
 }
 
 func normalizeRouteKind(kind string) string {

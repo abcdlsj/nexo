@@ -81,7 +81,7 @@ func TestSecurityMiddlewareHeaders(t *testing.T) {
 func TestAllPagesRenderSelfContainedHTML(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{}
-	page := PageData{Config: cfg, CSRFToken: "test-token", CurrentIP: "127.0.0.1"}
+	page := PageData{Config: cfg, CSRFToken: "test-token"}
 	login := struct {
 		PageData
 		Error    string
@@ -142,11 +142,14 @@ func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
 	if routes[0].IconURL != "/assets/studio.svg" || routes[0].Name != "Studio" {
 		t.Errorf("custom portal metadata not applied: %+v", routes[0])
 	}
-	if routes[1].IconURL != "/api/route-icon?domain=api.example.com" || routes[1].Policy != "OAUTH" {
+	if routes[1].IconURL != "" || routes[1].Policy != "OAUTH" {
 		t.Errorf("unsafe icon was not replaced or policy is wrong: %+v", routes[1])
 	}
 	if routes[2].Name != "Docs" || routes[2].Initial != "D" {
 		t.Errorf("default display metadata is wrong: %+v", routes[2])
+	}
+	if routes[2].Description != "" {
+		t.Errorf("default route retained generated description: %q", routes[2].Description)
 	}
 }
 
@@ -205,6 +208,13 @@ func TestRouteDiscovererFindsHTMLIconAndCaches(t *testing.T) {
 	if result.Kind != "WEBSITE" || result.IconContentType != "image/svg+xml" || len(result.Icon) == 0 {
 		t.Fatalf("unexpected discovery result: %+v", result)
 	}
+	routes := buildRouteViewsWithDiscovery(
+		map[string]*proxy.Config{"app.example.com": cfg},
+		map[string]routeDiscoveryResult{"app.example.com": result},
+	)
+	if len(routes) != 1 || routes[0].IconURL != "/api/route-icon?domain=app.example.com" {
+		t.Fatalf("discovered icon was not exposed through the route icon endpoint: %+v", routes)
+	}
 	before := requests.Load()
 	result = discoverer.discover(context.Background(), "app.example.com", cfg)
 	if result.Kind != "WEBSITE" || requests.Load() != before {
@@ -243,6 +253,18 @@ func TestRouteDiscovererMarksServerFailureUnavailable(t *testing.T) {
 	}
 }
 
+func TestRouteDiscovererMarksConnectionFailureUnavailable(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	upstream := server.URL
+	server.Close()
+
+	result := newRouteDiscoverer().discover(context.Background(), "offline.example.com", &proxy.Config{Upstream: upstream})
+	if !result.Unavailable {
+		t.Fatal("connection failure was not marked unavailable")
+	}
+}
+
 func TestRouteIconRejectsUnknownDomains(t *testing.T) {
 	t.Parallel()
 	handler := &Handler{cfg: &config.Config{Proxies: map[string]*proxy.Config{}}}
@@ -254,21 +276,37 @@ func TestRouteIconRejectsUnknownDomains(t *testing.T) {
 	}
 }
 
+func TestRouteIconWithoutDiscoveredImageReturnsNotFound(t *testing.T) {
+	t.Parallel()
+	handler := &Handler{cfg: &config.Config{Proxies: map[string]*proxy.Config{
+		"api.example.com": {Upstream: "http://127.0.0.1:9000", Portal: &proxy.PortalConfig{Kind: "API"}},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/api/route-icon?domain=api.example.com", nil)
+	response := httptest.NewRecorder()
+	handler.handleRouteIcon(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("route without discovered icon returned %d, want 404", response.Code)
+	}
+	if strings.Contains(response.Body.String(), "<svg") {
+		t.Fatal("route kind generated a fallback SVG")
+	}
+}
+
 func TestDashboardRendersSharedRouteProtocol(t *testing.T) {
 	t.Parallel()
-	page := PageData{Config: &config.Config{}, CurrentIP: "127.0.0.1"}
+	page := PageData{Config: &config.Config{}}
 	data := DashboardData{PageData: page, Routes: []RouteView{{Domain: "api.example.com", Name: "Developer API", Description: "Internal API", IconURL: "https://api.example.com/favicon.ico", Initial: "D", Kind: "API", Policy: "OAUTH", Href: "https://api.example.com", Auth: true, Unavailable: true}}, ProtectedRoutes: 1}
 	var output bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&output, "dashboard.html", data); err != nil {
 		t.Fatal(err)
 	}
 	html := output.String()
-	for _, value := range []string{"ROUTING BOARD", "ROUTE DIRECTORY", "Developer API", "data-route-index=\"0\"", "class=\"app-page\"", "Upstream unavailable"} {
+	for _, value := range []string{"Topology", "Services", "Developer API", "data-route-index=\"0\"", "class=\"app-page\"", "class=\"app-location\"", "<animateMotion", "route-wire-live-0", "Upstream unavailable"} {
 		if !strings.Contains(html, value) {
 			t.Errorf("dashboard output missing %q", value)
 		}
 	}
-	for _, removed := range []string{"Control room", "System overview", "All systems operational"} {
+	for _, removed := range []string{"Control room", "System overview", "All systems operational", "ROUTING BOARD", "ROUTE DIRECTORY", "class=\"page-intro\""} {
 		if strings.Contains(html, removed) {
 			t.Errorf("dashboard output retained removed copy %q", removed)
 		}

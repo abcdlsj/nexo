@@ -166,7 +166,7 @@ proxies:
 
 ### Gateway directory metadata (optional)
 
-Nexo publishes proxy routes in the gateway directory without additional configuration. It probes the configured upstream, classifies HTML applications and JSON/OpenAPI services, and discovers standard HTML icon links. Discovery results are cached. A failed probe uses the built-in service icon and does not remove the route. Connection failures, timeouts, and 5xx responses add a small red availability marker.
+Nexo publishes proxy routes in the gateway directory without additional configuration. It probes the configured upstream, classifies HTML applications and JSON/OpenAPI services, and discovers standard HTML icon links. Discovery results are cached. If no icon is found, the route uses the first letter of its display name. Connection failures, timeouts, and 5xx responses add a small red availability marker.
 
 Redirects and registrable apex domains are not published by default. Add a `portal` block to publish one explicitly.
 

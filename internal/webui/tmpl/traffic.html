@@ -2,24 +2,6 @@
 <body class="app-page">
   {{template "nav" .}}
   <main class="container">
-    <header class="page-intro">
-      <div>
-        <div class="eyebrow">TRAFFIC / LIVE</div>
-        <h1>Traffic</h1>
-        <p class="lede">Refresh interval: 10 seconds while this tab is visible</p>
-      </div>
-      <div class="traffic-refresh">
-        <div class="refresh-indicator flex items-center gap-2 text-sm" aria-live="polite">
-          <span id="spinner" aria-hidden="true">↻</span>
-          <span id="lastUpdate">Connecting...</span>
-        </div>
-        <button type="button" class="btn btn-ghost btn-sm" id="refreshButton" onclick="fetchTrafficData()">
-          <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
-          Refresh
-        </button>
-      </div>
-    </header>
-
     <section class="stats-grid" id="statsGrid" aria-label="Traffic summary" aria-busy="true">
       <article class="stat-card"><div class="stat-label">Total requests</div><div class="stat-value">--</div></article>
       <article class="stat-card"><div class="stat-label">HTTPS traffic</div><div class="stat-value">--</div></article>

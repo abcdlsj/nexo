@@ -39,6 +39,7 @@
         var selector = '.route-wire-' + node.dataset.routeIndex;
         setPath(selector, connectorPath(relativePoint(core, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));
         document.querySelectorAll(selector).forEach(function (wire) { wire.hidden = node.hidden; });
+        document.querySelectorAll('.route-packet-' + node.dataset.routeIndex).forEach(function (packet) { packet.hidden = node.hidden; });
       });
     }
 

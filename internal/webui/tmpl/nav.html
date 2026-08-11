@@ -3,59 +3,59 @@
   <aside class="app-sidebar">
     <a href="/" class="app-brand" aria-label="Nexo routing board">
       {{template "mark" .}}
-      <span><b>nexo</b><small>switchboard</small></span>
+      <b class="nexo-wordmark">NEXO</b>
     </a>
 
     <div class="app-nav">
       <a href="/" class="{{if eq .ActiveNav "dashboard"}}active{{end}}" {{if eq .ActiveNav "dashboard"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="m7.5 11 9-4M7.5 13l9 4"/></svg>
-        <span>Routing board</span><small>01</small>
+        <span>Gateway</span>
       </a>
       <a href="/proxies" class="{{if eq .ActiveNav "proxies"}}active{{end}}" {{if eq .ActiveNav "proxies"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v14H4zM4 10h16M9 5v14"/></svg>
-        <span>Routes</span><small>{{len .Config.Proxies}}</small>
+        <span>Routes</span>
       </a>
       <a href="/certs" class="{{if eq .ActiveNav "certs"}}active{{end}}" {{if eq .ActiveNav "certs"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span>Certificates</span><small>TLS</small>
+        <span>Certificates</span>
       </a>
       <a href="/traffic" class="{{if eq .ActiveNav "traffic"}}active{{end}}" {{if eq .ActiveNav "traffic"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 18V9m5 9V5m6 13v-7m5 7V3"/></svg>
-        <span>Traffic</span><small>24H</small>
+        <span>Traffic</span>
       </a>
       <a href="/config" class="{{if eq .ActiveNav "config"}}active{{end}}" {{if eq .ActiveNav "config"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
-        <span>Config</span><small>SYS</small>
+        <span>Config</span>
       </a>
     </div>
 
-    <section class="core-readout" aria-label="Nexo core status">
-      <div class="core-head"><i class="status-led"></i><span>NEXO CORE</span><b>ONLINE</b></div>
-      <dl>
-        <div><dt>ROUTES</dt><dd>{{len .Config.Proxies}}</dd></div>
-        <div><dt>MODE</dt><dd>{{if .Demo}}PREVIEW{{else}}LIVE{{end}}</dd></div>
-        <div><dt>WEB UI</dt><dd>{{if .Config.WebUI.Port}}:{{.Config.WebUI.Port}}{{else}}:8080{{end}}</dd></div>
-        <div><dt>CLIENT</dt><dd>{{.CurrentIP}}</dd></div>
-      </dl>
-    </section>
+    <div class="core-readout" aria-label="Nexo status"><i class="status-led"></i><span>{{if .Demo}}Preview{{else}}Running{{end}}</span></div>
   </aside>
 
   <header class="app-topbar">
-    <div class="app-location"><span>NEXO /</span>
-      {{if eq .ActiveNav "dashboard"}}GATEWAY
-      {{else if eq .ActiveNav "proxies"}}ROUTES
-      {{else if eq .ActiveNav "certs"}}CERTIFICATES
-      {{else if eq .ActiveNav "traffic"}}TRAFFIC
-      {{else if eq .ActiveNav "config"}}CONFIG
-      {{else}}NOT FOUND{{end}}
-    </div>
+    <h1 class="app-location">
+      {{if eq .ActiveNav "dashboard"}}Gateway
+      {{else if eq .ActiveNav "proxies"}}Routes
+      {{else if eq .ActiveNav "certs"}}Certificates
+      {{else if eq .ActiveNav "traffic"}}Traffic
+      {{else if eq .ActiveNav "config"}}Configuration
+      {{else}}NEXO{{end}}
+    </h1>
     {{if eq .ActiveNav "dashboard"}}
     <label class="gateway-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
       <input id="route-search" type="search" placeholder="Filter routes" aria-label="Filter routes">
-      <kbd>/</kbd>
     </label>
-    <a class="topbar-action" href="/proxies#add-route"><b>＋</b><span>ROUTE</span></a>
+    <a class="topbar-action" href="/proxies#add-route"><b>＋</b><span>Route</span></a>
+    {{end}}
+    {{if eq .ActiveNav "traffic"}}
+    <div class="traffic-refresh">
+      <div class="refresh-indicator" aria-live="polite"><span id="spinner" aria-hidden="true">↻</span> <span id="lastUpdate">Connecting...</span></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="refreshButton" onclick="fetchTrafficData()">
+        <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+        Refresh
+      </button>
+    </div>
     {{end}}
     {{if .Demo}}<span class="demo-badge">PREVIEW</span>{{end}}
     <button type="button" class="theme-toggle" id="themeToggle" title="Toggle color theme" aria-label="Toggle color theme" onclick="toggleTheme()">

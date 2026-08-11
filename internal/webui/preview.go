@@ -50,7 +50,7 @@ func newPreviewHandler() http.Handler {
 		}
 	}
 	page := func(active string) PageData {
-		return PageData{ActiveNav: active, Config: cfg, CSRFToken: "preview-token", CurrentIP: "127.0.0.1", Demo: true}
+		return PageData{ActiveNav: active, Config: cfg, CSRFToken: "preview-token", Demo: true}
 	}
 
 	mux.HandleFunc("/api/traffic", security(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,13 @@ func newPreviewHandler() http.Handler {
 		}
 		switch r.URL.Path {
 		case "/":
-			data := DashboardData{PageData: page("dashboard"), Routes: buildRouteViews(proxies), ProtectedRoutes: 2}
+			routes := buildRouteViews(proxies)
+			for index := range routes {
+				if routes[index].Domain == "metrics.nexo.local" {
+					routes[index].Unavailable = true
+				}
+			}
+			data := DashboardData{PageData: page("dashboard"), Routes: routes, ProtectedRoutes: 2}
 			render(w, "dashboard.html", data, http.StatusOK)
 		case "/proxies":
 			render(w, "proxies.html", ProxiesData{PageData: page("proxies"), Proxies: proxies}, http.StatusOK)

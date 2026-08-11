@@ -47,7 +47,6 @@ var (
 
 	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"hasPrefix": strings.HasPrefix,
-		"inc":       func(value int) int { return value + 1 },
 	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
 
@@ -301,7 +300,6 @@ func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
 		ActiveNav: activeNav,
 		Config:    h.cfg,
 		CSRFToken: csrfToken,
-		CurrentIP: getClientIP(r),
 	}
 }
 
@@ -429,7 +427,6 @@ type PageData struct {
 	ActiveNav string
 	Config    *config.Config
 	CSRFToken string
-	CurrentIP string
 	Demo      bool
 }
 
@@ -491,7 +488,6 @@ func buildRouteViewsWithDiscovery(proxies map[string]*proxy.Config, discoveries 
 			}
 		}
 		if cfg.Redirect != "" {
-			description = "Redirect to " + cfg.Redirect
 			kind = "REDIRECT"
 			target = cfg.Redirect
 		}
@@ -512,27 +508,20 @@ func buildRouteViewsWithDiscovery(proxies map[string]*proxy.Config, discoveries 
 			}
 			order = cfg.Portal.Order
 		}
-		if description == "" {
-			switch kind {
-			case "API":
-				description = "API endpoint"
-			case "WEBSITE":
-				description = "Web application"
-			default:
-				description = "Proxied service"
-			}
-		}
-
 		policy := "PUBLIC"
 		if cfg.Auth {
 			policy = "OAUTH"
 		}
 		discovery := discoveries[domain]
+		iconURL := portalIconURL(domain, cfg.Portal)
+		if automaticPortalIcon(cfg.Portal) && len(discovery.Icon) == 0 {
+			iconURL = ""
+		}
 		routes = append(routes, RouteView{
 			Domain:      domain,
 			Name:        name,
 			Description: description,
-			IconURL:     portalIconURL(domain, cfg.Portal),
+			IconURL:     iconURL,
 			Initial:     routeInitial(name),
 			Group:       group,
 			Target:      target,
@@ -603,6 +592,14 @@ func portalIconURL(domain string, portal *proxy.PortalConfig) string {
 		return raw
 	}
 	return fallback
+}
+
+func automaticPortalIcon(portal *proxy.PortalConfig) bool {
+	if portal == nil {
+		return true
+	}
+	raw := strings.TrimSpace(portal.Icon)
+	return raw == "" || strings.EqualFold(raw, "auto") || !validPortalIcon(raw)
 }
 
 func validPortalIcon(raw string) bool {
