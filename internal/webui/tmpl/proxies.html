@@ -4,141 +4,44 @@
 
   <div class="container">
     <details class="route-composer card" id="add-route">
-      <summary>
-        <span><strong>Add route</strong><span class="card-subtitle">Create a proxy or HTTPS redirect</span></span>
-      </summary>
-      <div class="composer-body">
-      <form method="POST" action="/proxies/add">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <div class="composer-grid">
-          <div class="form-group">
-            <label for="domain">Domain</label>
-            <input type="text" id="domain" name="domain" placeholder="api.example.com" inputmode="url" autocomplete="off" required>
-          </div>
-          <div class="form-group">
-            <span class="field-label" id="route-type-label">Route type</span>
-            <div class="segmented" role="radiogroup" aria-labelledby="route-type-label">
-              <label><input type="radio" name="type" value="proxy" checked onchange="toggleType()">Proxy</label>
-              <label><input type="radio" name="type" value="redirect" onchange="toggleType()">Redirect</label>
-            </div>
-          </div>
-        </div>
-        <div class="form-group" id="upstream-group">
-          <label for="upstream">Upstream URL</label>
-          <input type="url" id="upstream" name="upstream" placeholder="http://127.0.0.1:8080" autocomplete="off">
-        </div>
-        <div class="form-group" id="redirect-group" hidden>
-          <label for="redirect">Redirect destination</label>
-          <input type="text" id="redirect" name="redirect" placeholder="https://www.example.com" autocomplete="off">
-        </div>
-        <fieldset class="portal-options">
-          <legend>Gateway directory</legend>
-          <div class="portal-grid">
-            <div class="form-group">
-              <label for="portal_name">Display name</label>
-              <input type="text" id="portal_name" name="portal_name" placeholder="Defaults to the domain name" maxlength="80">
-            </div>
-            <div class="form-group">
-              <label for="portal_group">Group</label>
-              <input type="text" id="portal_group" name="portal_group" placeholder="default" maxlength="40">
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="portal_description">Description</label>
-            <input type="text" id="portal_description" name="portal_description" placeholder="Short factual description" maxlength="160">
-          </div>
-          <div class="portal-grid">
-            <div class="form-group">
-              <label for="portal_icon">Icon URL</label>
-              <input type="text" id="portal_icon" name="portal_icon" placeholder="auto, /path, or https://…" autocomplete="off">
-            </div>
-            <div class="form-group">
-              <label for="portal_kind">Service kind</label>
-              <select id="portal_kind" name="portal_kind">
-                <option value="">Auto detect</option>
-                <option value="website">Website</option>
-                <option value="api">API</option>
-                <option value="service">Service</option>
-              </select>
-            </div>
-          </div>
-          <div class="portal-grid">
-            <div class="form-group">
-              <label for="portal_order">Order</label>
-              <input type="number" id="portal_order" name="portal_order" placeholder="0">
-            </div>
-          </div>
-          <label class="switch-row"><input type="checkbox" name="portal_hidden"> Hide from gateway directory</label>
-        </fieldset>
-        <div class="composer-actions">
-          <div>
-          <label class="switch-row">
-            <input type="checkbox" name="auth" id="auth">
-            Require OAuth authentication
-          </label>
-          <p class="text-xs text-muted" id="auth-help">Applies to proxy routes only</p>
-          </div>
-          <button type="submit" class="btn btn-primary">
-            <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            Add route
-          </button>
-        </div>
-      </form>
-      </div>
+      <summary><strong>Add route</strong></summary>
+      <div class="composer-body">{{template "route_form" .CreateEditor}}</div>
     </details>
 
-    <!-- Proxy List -->
     {{if eq (len .Proxies) 0}}
-    <div class="card">
-      <div class="empty-state">
-        <svg class="empty-state-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-          <path d="M2 17l10 5 10-5"></path>
-          <path d="M2 12l10 5 10-5"></path>
-        </svg>
-        <p>No proxies configured yet</p>
-        <p class="text-sm text-muted" style="margin-top: 0.5rem;">Use the form above to add your first proxy</p>
-      </div>
-    </div>
+    <div class="empty-state">No routes configured.</div>
     {{else}}
-    <div class="proxy-list">
+    <div class="proxy-list" id="route-list">
       {{range $domain, $proxy := .Proxies}}
-      <div class="proxy-item">
-        <div class="proxy-info">
-          <div class="proxy-domain">
-            {{$domain}}
-            {{if $proxy.Upstream}}
-            <span class="proxy-type-badge proxy">Proxy</span>
-            {{else}}
-            <span class="proxy-type-badge redirect">Redirect</span>
-            {{end}}
-            {{if $proxy.Auth}}
-            <span class="proxy-type-badge auth">Auth</span>
-            {{end}}
+      <div class="proxy-entry">
+        <div class="proxy-item">
+          <div class="proxy-info">
+            <div class="proxy-domain">
+              {{$domain}}
+              {{if $proxy.Upstream}}<span class="proxy-type-badge proxy">Proxy</span>{{else}}<span class="proxy-type-badge redirect">Redirect</span>{{end}}
+              {{if $proxy.Auth}}<span class="proxy-type-badge auth">Auth</span>{{end}}
+            </div>
+            <div class="proxy-target">→ {{if $proxy.Upstream}}{{$proxy.Upstream}}{{else}}{{$proxy.Redirect}}{{end}}</div>
           </div>
-          <div class="proxy-target">
-            {{if $proxy.Upstream}}
-              → {{$proxy.Upstream}}
-            {{else}}
-              → {{$proxy.Redirect}}
-            {{end}}
+          <div class="proxy-actions">
+            <a class="btn btn-ghost btn-icon" href="/proxies?edit={{urlquery $domain}}#edit-route" title="Edit route" aria-label="Edit route {{$domain}}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 16px; height: 16px;"><path d="M4 20h4l11-11-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>
+            </a>
+            <form method="POST" action="/proxies/delete" onsubmit="return confirm('Delete route {{$domain}}?');">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="domain" value="{{$domain}}">
+              <button type="submit" class="btn btn-ghost btn-icon" title="Delete route" aria-label="Delete route {{$domain}}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 16px; height: 16px;"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+              </button>
+            </form>
           </div>
         </div>
-        <div class="proxy-actions">
-          <form method="POST" action="/proxies/delete" onsubmit="return confirm('Delete route {{$domain}}?');">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="domain" value="{{$domain}}">
-            <button type="submit" class="btn btn-ghost btn-icon" title="Delete route" aria-label="Delete route {{$domain}}">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
-          </form>
+
+        {{if $.EditEditor}}{{if eq $domain $.EditEditor.Form.OriginalDomain}}
+        <div class="route-inline-editor" id="edit-route">
+          {{template "route_form" $.EditEditor}}
         </div>
+        {{end}}{{end}}
       </div>
       {{end}}
     </div>
@@ -146,31 +49,24 @@
   </div>
 
   <script>
-    function toggleType() {
-      var type = document.querySelector('input[name="type"]:checked').value;
-      var upstreamGroup = document.getElementById('upstream-group');
-      var redirectGroup = document.getElementById('redirect-group');
-      var upstreamInput = document.getElementById('upstream');
-      var redirectInput = document.getElementById('redirect');
+    function toggleRouteType(form) {
+      var selected = form.querySelector('input[name="type"]:checked');
+      if (!selected) return;
+      var proxy = selected.value === 'proxy';
+      var upstreamGroup = form.querySelector('[data-route-field="upstream"]');
+      var redirectGroup = form.querySelector('[data-route-field="redirect"]');
+      var upstreamInput = upstreamGroup.querySelector('input');
+      var redirectInput = redirectGroup.querySelector('input');
+      var authInput = form.querySelector('[data-route-auth]');
 
-      if (type === 'proxy') {
-        upstreamGroup.hidden = false;
-        redirectGroup.hidden = true;
-        upstreamInput.required = true;
-        redirectInput.required = false;
-        redirectInput.value = '';
-        document.getElementById('auth').disabled = false;
-      } else {
-        upstreamGroup.hidden = true;
-        redirectGroup.hidden = false;
-        upstreamInput.required = false;
-        redirectInput.required = true;
-        upstreamInput.value = '';
-        document.getElementById('auth').checked = false;
-        document.getElementById('auth').disabled = true;
-      }
+      upstreamGroup.hidden = !proxy;
+      redirectGroup.hidden = proxy;
+      upstreamInput.required = proxy;
+      redirectInput.required = !proxy;
+      authInput.disabled = !proxy;
     }
-    toggleType();
+
+    document.querySelectorAll('.route-form').forEach(toggleRouteType);
   </script>
 </body>
 </html>

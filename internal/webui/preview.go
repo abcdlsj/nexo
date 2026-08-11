@@ -89,7 +89,18 @@ func newPreviewHandler() http.Handler {
 			data := DashboardData{PageData: page("dashboard"), Routes: routes, ProtectedRoutes: 2}
 			render(w, "dashboard.html", data, http.StatusOK)
 		case "/proxies":
-			render(w, "proxies.html", ProxiesData{PageData: page("proxies"), Proxies: proxies}, http.StatusOK)
+			var editEditor *RouteEditorData
+			if editDomain := strings.TrimSpace(r.URL.Query().Get("edit")); editDomain != "" {
+				if route, ok := proxies[editDomain]; ok {
+					editEditor = &RouteEditorData{ID: "edit-route", CSRFToken: "preview-token", Form: newRouteFormData(editDomain, route)}
+				}
+			}
+			render(w, "proxies.html", ProxiesData{
+				PageData:     page("proxies"),
+				Proxies:      proxies,
+				CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "preview-token", Form: newRouteFormData("", nil)},
+				EditEditor:   editEditor,
+			}, http.StatusOK)
 		case "/certs":
 			render(w, "certs.html", CertsData{PageData: page("certs"), Wildcards: cfg.Wildcards, Certs: certs, LastRenewal: "2026-07-27 09:42:18"}, http.StatusOK)
 		case "/config":

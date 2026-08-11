@@ -1,0 +1,74 @@
+{{define "route_form"}}
+{{$form := .Form}}
+{{$id := .ID}}
+<form class="route-form" method="POST" action="{{if $form.Editing}}/proxies/update{{else}}/proxies/add{{end}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  {{if $form.Editing}}<input type="hidden" name="original_domain" value="{{$form.OriginalDomain}}">{{end}}
+
+  <div class="route-primary-grid">
+    <div class="form-group">
+      <label for="{{$id}}-domain">Domain</label>
+      <input type="text" id="{{$id}}-domain" name="domain" value="{{$form.Domain}}" placeholder="api.example.com" inputmode="url" autocomplete="off" required>
+    </div>
+    <div class="form-group">
+      <span class="field-label" id="{{$id}}-type-label">Type</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="{{$id}}-type-label">
+        <label><input type="radio" name="type" value="proxy" {{if eq $form.Type "proxy"}}checked{{end}} onchange="toggleRouteType(this.form)">Proxy</label>
+        <label><input type="radio" name="type" value="redirect" {{if eq $form.Type "redirect"}}checked{{end}} onchange="toggleRouteType(this.form)">Redirect</label>
+      </div>
+    </div>
+    <div class="form-group" data-route-field="upstream">
+      <label for="{{$id}}-upstream">Upstream</label>
+      <input type="url" id="{{$id}}-upstream" name="upstream" value="{{$form.Upstream}}" placeholder="http://127.0.0.1:8080" autocomplete="off">
+    </div>
+    <div class="form-group" data-route-field="redirect" hidden>
+      <label for="{{$id}}-redirect">Destination</label>
+      <input type="text" id="{{$id}}-redirect" name="redirect" value="{{$form.Redirect}}" placeholder="https://www.example.com" autocomplete="off">
+    </div>
+  </div>
+
+  <details class="route-settings">
+    <summary>Directory settings</summary>
+    <div class="route-settings-grid">
+      <div class="form-group">
+        <label for="{{$id}}-portal-name">Display name</label>
+        <input type="text" id="{{$id}}-portal-name" name="portal_name" value="{{$form.PortalName}}" maxlength="80">
+      </div>
+      <div class="form-group">
+        <label for="{{$id}}-portal-group">Group</label>
+        <input type="text" id="{{$id}}-portal-group" name="portal_group" value="{{$form.PortalGroup}}" maxlength="40">
+      </div>
+      <div class="form-group route-settings-wide">
+        <label for="{{$id}}-portal-description">Description</label>
+        <input type="text" id="{{$id}}-portal-description" name="portal_description" value="{{$form.PortalDescription}}" maxlength="160">
+      </div>
+      <div class="form-group route-settings-wide">
+        <label for="{{$id}}-portal-icon">Icon URL</label>
+        <input type="text" id="{{$id}}-portal-icon" name="portal_icon" value="{{$form.PortalIcon}}" placeholder="auto, /path, or https://…" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="{{$id}}-portal-kind">Service kind</label>
+        <select id="{{$id}}-portal-kind" name="portal_kind">
+          <option value="" {{if eq $form.PortalKind ""}}selected{{end}}>Auto detect</option>
+          <option value="website" {{if eq $form.PortalKind "website"}}selected{{end}}>Website</option>
+          <option value="api" {{if eq $form.PortalKind "api"}}selected{{end}}>API</option>
+          <option value="service" {{if eq $form.PortalKind "service"}}selected{{end}}>Service</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="{{$id}}-portal-order">Order</label>
+        <input type="number" id="{{$id}}-portal-order" name="portal_order" {{if ne $form.PortalOrder 0}}value="{{$form.PortalOrder}}"{{end}} placeholder="0">
+      </div>
+    </div>
+    <label class="switch-row"><input type="checkbox" name="portal_hidden" {{if $form.PortalHidden}}checked{{end}}> Hide from directory</label>
+  </details>
+
+  <div class="route-form-actions">
+    <label class="switch-row"><input type="checkbox" name="auth" data-route-auth {{if $form.Auth}}checked{{end}}> OAuth</label>
+    <div class="route-submit-actions">
+      {{if $form.Editing}}<a class="btn btn-ghost" href="/proxies">Cancel</a>{{end}}
+      <button type="submit" class="btn btn-primary">{{if $form.Editing}}Save{{else}}Add route{{end}}</button>
+    </div>
+  </div>
+</form>
+{{end}}

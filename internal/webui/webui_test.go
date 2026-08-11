@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -92,11 +93,14 @@ func TestAllPagesRenderSelfContainedHTML(t *testing.T) {
 	pages := map[string]any{
 		"404.html":       page,
 		"dashboard.html": DashboardData{PageData: page},
-		"proxies.html":   ProxiesData{PageData: page},
-		"certs.html":     CertsData{PageData: page},
-		"config.html":    ConfigData{PageData: page},
-		"traffic.html":   page,
-		"login.html":     login,
+		"proxies.html": ProxiesData{
+			PageData:     page,
+			CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "test-token", Form: newRouteFormData("", nil)},
+		},
+		"certs.html":   CertsData{PageData: page},
+		"config.html":  ConfigData{PageData: page},
+		"traffic.html": page,
+		"login.html":   login,
 	}
 	for name, data := range pages {
 		var output bytes.Buffer
@@ -109,6 +113,111 @@ func TestAllPagesRenderSelfContainedHTML(t *testing.T) {
 		}
 		if strings.Contains(html, "fonts.googleapis.com") || strings.Contains(html, "fonts.gstatic.com") {
 			t.Errorf("%s contains an external font dependency", name)
+		}
+	}
+}
+
+func TestUpdateProxyRenamesRouteAndPreservesAdvancedSettings(t *testing.T) {
+	t.Parallel()
+	originalDomain := "api.example.com"
+	original := &proxy.Config{
+		Upstream:              "http://127.0.0.1:9000",
+		WriteTimeout:          "5m",
+		ResponseHeaderTimeout: "15s",
+		Retry:                 true,
+		Portal:                &proxy.PortalConfig{Name: "Old API"},
+	}
+	cfg := &config.Config{Proxies: map[string]*proxy.Config{originalDomain: original}}
+	handler := &Handler{cfg: cfg, cfgPath: t.TempDir() + "/config.yaml"}
+	form := url.Values{
+		"original_domain":    {originalDomain},
+		"domain":             {"api-v2.example.com"},
+		"type":               {"proxy"},
+		"upstream":           {"http://127.0.0.1:9100"},
+		"auth":               {"on"},
+		"portal_name":        {"Developer API"},
+		"portal_description": {"Internal API"},
+		"portal_kind":        {"api"},
+		"portal_group":       {"workspace"},
+		"portal_order":       {"12"},
+		"portal_hidden":      {"on"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/proxies/update", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	handler.handleUpdateProxy(response, request)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/proxies?message=Route+updated" {
+		t.Fatalf("update response = %d %q", response.Code, response.Header().Get("Location"))
+	}
+	if _, exists := cfg.Proxies[originalDomain]; exists {
+		t.Fatal("original route remained after domain rename")
+	}
+	updated := cfg.Proxies["api-v2.example.com"]
+	if updated == nil {
+		t.Fatal("renamed route was not created")
+	}
+	if updated.Upstream != "http://127.0.0.1:9100" || !updated.Auth {
+		t.Fatalf("editable route fields were not updated: %+v", updated)
+	}
+	if updated.WriteTimeout != "5m" || updated.ResponseHeaderTimeout != "15s" || !updated.Retry {
+		t.Fatalf("advanced route settings were lost: %+v", updated)
+	}
+	if updated.Portal == nil || updated.Portal.Name != "Developer API" || updated.Portal.Kind != "API" || updated.Portal.Order != 12 || !updated.Portal.Hidden {
+		t.Fatalf("gateway directory settings were not updated: %+v", updated.Portal)
+	}
+}
+
+func TestUpdateProxyRejectsDomainCollision(t *testing.T) {
+	t.Parallel()
+	original := &proxy.Config{Upstream: "http://127.0.0.1:9000"}
+	existing := &proxy.Config{Upstream: "http://127.0.0.1:9100"}
+	cfg := &config.Config{Proxies: map[string]*proxy.Config{
+		"api.example.com":   original,
+		"taken.example.com": existing,
+	}}
+	handler := &Handler{cfg: cfg, cfgPath: t.TempDir() + "/config.yaml"}
+	form := url.Values{
+		"original_domain": {"api.example.com"},
+		"domain":          {"taken.example.com"},
+		"type":            {"proxy"},
+		"upstream":        {"http://127.0.0.1:9200"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/proxies/update", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	handler.handleUpdateProxy(response, request)
+
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "error=domain_exists") {
+		t.Fatalf("collision response = %d %q", response.Code, response.Header().Get("Location"))
+	}
+	if cfg.Proxies["api.example.com"] != original || cfg.Proxies["taken.example.com"] != existing {
+		t.Fatal("domain collision changed the route map")
+	}
+}
+
+func TestProxiesTemplatePrefillsEditForm(t *testing.T) {
+	t.Parallel()
+	route := &proxy.Config{
+		Redirect: "https://www.example.com",
+		Portal:   &proxy.PortalConfig{Name: "Website", Kind: "WEBSITE", Hidden: true},
+	}
+	data := ProxiesData{
+		PageData:     PageData{Config: &config.Config{}, CSRFToken: "test-token"},
+		Proxies:      map[string]*proxy.Config{"old.example.com": route},
+		CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "test-token", Form: newRouteFormData("", nil)},
+		EditEditor:   &RouteEditorData{ID: "edit-route", CSRFToken: "test-token", Form: newRouteFormData("old.example.com", route)},
+	}
+	var output bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&output, "proxies.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	for _, value := range []string{`class="route-inline-editor"`, `action="/proxies/update"`, `name="original_domain" value="old.example.com"`, `value="https://www.example.com"`, `value="redirect" checked`, `>Save</button>`} {
+		if !strings.Contains(html, value) {
+			t.Errorf("edit form output missing %q", value)
 		}
 	}
 }

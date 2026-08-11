@@ -546,6 +546,33 @@
     .portal-options { margin: 1.2rem 0; padding: 1.2rem 0 0; border: 0; border-top: 1px solid var(--line-soft); }
     .portal-options legend { padding: 0 .5rem 0 0; color: var(--ink); font-size: 13px; font-weight: 650; }
     .portal-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, .42fr); gap: .8rem; }
+    .route-composer { margin-bottom: 20px; }
+    .route-composer > summary { min-height: 42px; padding: 0; border-bottom: 1px solid transparent; background: transparent; font-size: 13px; }
+    .route-composer > summary::after { width: 22px; height: 22px; border: 0; background: transparent; color: var(--blue); font: 18px/1 var(--mono-font); }
+    .route-composer[open] > summary { border-bottom-color: var(--line-soft); background: transparent; }
+    .composer-body { padding: 14px 0 2px; }
+    .route-form { display: grid; gap: 12px; }
+    .route-primary-grid { display: grid; grid-template-columns: minmax(180px, .9fr) 178px minmax(230px, 1.25fr); align-items: end; gap: 12px; }
+    .route-form .form-group { gap: 6px; margin: 0; }
+    .route-form input[type="text"], .route-form input[type="url"], .route-form input[type="number"], .route-form select { min-height: 36px; padding-block: 6px; font-size: 13px; }
+    .route-form .segmented { min-height: 36px; padding: 2px; }
+    .route-form .segmented label { min-width: 74px; padding: 6px 9px; font-size: 12px; }
+    .route-settings { border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+    .route-settings > summary { min-height: 36px; display: flex; align-items: center; color: var(--ink-soft); font-size: 12px; cursor: pointer; list-style: none; }
+    .route-settings > summary::-webkit-details-marker { display: none; }
+    .route-settings > summary::after { content: "+"; margin-left: auto; color: var(--blue); font: 16px/1 var(--mono-font); }
+    .route-settings[open] > summary::after { content: "−"; }
+    .route-settings-grid { display: grid; grid-template-columns: minmax(140px, 1.1fr) minmax(110px, .7fr) minmax(130px, .7fr) 90px; gap: 10px; padding: 4px 0 12px; }
+    .route-settings-wide { grid-column: span 2; }
+    .route-settings > .switch-row { margin-bottom: 12px; font-size: 12px; }
+    .route-form-actions { min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .route-form-actions .switch-row { font-size: 12px; }
+    .route-submit-actions { display: flex; align-items: center; gap: 8px; }
+    .proxy-entry { border-bottom: 1px solid var(--line-soft); }
+    .proxy-entry > .proxy-item { border-bottom: 0; }
+    .proxy-entry:has(.route-inline-editor) > .proxy-item { background: var(--blue-soft); }
+    .route-inline-editor { padding: 14px 16px 18px 42px; border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--wash) 42%, var(--canvas)); }
+    .route-inline-editor .route-form { padding-left: 14px; border-left: 2px solid var(--blue); }
     .table-scroll { border: 0; border-top: 1px solid var(--line-soft); }
     th { background: var(--wash); }
     th, td { border-bottom-color: var(--line-soft); }
@@ -607,6 +634,22 @@
     .gateway-empty { min-height: 100%; display: grid; place-items: center; padding: 24px; color: var(--ink-soft); font-size: 13px; text-align: center; }
     .route-filter-empty { display: none; min-height: 100%; place-items: center; color: var(--ink-soft); font-size: 13px; }
     .route-filter-empty.visible { display: grid; }
+
+    @media (max-width: 860px) {
+      .route-primary-grid { grid-template-columns: minmax(180px, 1fr) 160px; }
+      .route-primary-grid [data-route-field] { grid-column: 1 / -1; }
+      .route-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 600px) {
+      .route-primary-grid, .route-settings-grid { grid-template-columns: 1fr; }
+      .route-primary-grid [data-route-field], .route-settings-wide { grid-column: auto; }
+      .route-form-actions { align-items: stretch; flex-direction: column; }
+      .route-submit-actions, .route-submit-actions .btn { width: 100%; }
+      .route-submit-actions .btn { flex: 1; }
+      .route-inline-editor { padding: 12px 8px 16px; }
+      .route-inline-editor .route-form { padding-left: 10px; }
+    }
 
     @media (max-width: 940px) {
       .app-sidebar { width: 154px; }

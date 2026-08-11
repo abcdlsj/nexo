@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"html/template"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -118,6 +119,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logout", protected(h.handleLogout))
 	mux.HandleFunc("/proxies", protected(h.handleProxies))
 	mux.HandleFunc("/proxies/add", protected(h.handleAddProxy))
+	mux.HandleFunc("/proxies/update", protected(h.handleUpdateProxy))
 	mux.HandleFunc("/proxies/delete", protected(h.handleDeleteProxy))
 	mux.HandleFunc("/certs", protected(h.handleCerts))
 	mux.HandleFunc("/certs/renew", protected(h.handleRenewCert))
@@ -649,17 +651,79 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 type ProxiesData struct {
 	PageData
-	Proxies map[string]*proxy.Config
-	Message string
-	Error   string
+	Proxies      map[string]*proxy.Config
+	CreateEditor RouteEditorData
+	EditEditor   *RouteEditorData
+	Message      string
+	Error        string
+}
+
+type RouteEditorData struct {
+	ID        string
+	CSRFToken string
+	Form      RouteFormData
+}
+
+type RouteFormData struct {
+	Editing           bool
+	OriginalDomain    string
+	Domain            string
+	Type              string
+	Upstream          string
+	Redirect          string
+	Auth              bool
+	PortalName        string
+	PortalDescription string
+	PortalIcon        string
+	PortalKind        string
+	PortalGroup       string
+	PortalOrder       int
+	PortalHidden      bool
+}
+
+func newRouteFormData(domain string, cfg *proxy.Config) RouteFormData {
+	form := RouteFormData{Type: "proxy"}
+	if cfg == nil {
+		return form
+	}
+
+	form.Editing = true
+	form.OriginalDomain = domain
+	form.Domain = domain
+	form.Upstream = cfg.Upstream
+	form.Redirect = cfg.Redirect
+	form.Auth = cfg.Auth
+	if cfg.Upstream == "" && cfg.Redirect != "" {
+		form.Type = "redirect"
+	}
+	if cfg.Portal != nil {
+		form.PortalName = cfg.Portal.Name
+		form.PortalDescription = cfg.Portal.Description
+		form.PortalIcon = cfg.Portal.Icon
+		form.PortalKind = strings.ToLower(cfg.Portal.Kind)
+		form.PortalGroup = cfg.Portal.Group
+		form.PortalOrder = cfg.Portal.Order
+		form.PortalHidden = cfg.Portal.Hidden
+	}
+	return form
 }
 
 func (h *Handler) handleProxies(w http.ResponseWriter, r *http.Request) {
+	pageData := h.newPageData(r, "proxies")
+	csrfToken := pageData.CSRFToken
+	var editEditor *RouteEditorData
+	if editDomain := strings.TrimSpace(r.URL.Query().Get("edit")); editDomain != "" {
+		if cfg, ok := h.cfg.Proxies[editDomain]; ok {
+			editEditor = &RouteEditorData{ID: "edit-route", CSRFToken: csrfToken, Form: newRouteFormData(editDomain, cfg)}
+		}
+	}
 	data := ProxiesData{
-		PageData: h.newPageData(r, "proxies"),
-		Proxies:  h.cfg.Proxies,
-		Message:  r.URL.Query().Get("message"),
-		Error:    r.URL.Query().Get("error"),
+		PageData:     pageData,
+		Proxies:      h.cfg.Proxies,
+		CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: csrfToken, Form: newRouteFormData("", nil)},
+		EditEditor:   editEditor,
+		Message:      r.URL.Query().Get("message"),
+		Error:        r.URL.Query().Get("error"),
 	}
 
 	if err := tmpl.ExecuteTemplate(w, "proxies.html", data); err != nil {
@@ -674,35 +738,87 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domain := strings.TrimSpace(r.FormValue("domain"))
-	proxyType := r.FormValue("type")
-
-	if !validDomain(domain, false) {
-		http.Redirect(w, r, "/proxies?error=invalid_domain", http.StatusSeeOther)
+	domain, cfg, formError := parseRouteForm(r, nil)
+	if formError != "" {
+		http.Redirect(w, r, "/proxies?error="+formError, http.StatusSeeOther)
 		return
+	}
+	if _, exists := h.cfg.Proxies[domain]; exists {
+		http.Redirect(w, r, "/proxies?error=domain_exists", http.StatusSeeOther)
+		return
+	}
+	if err := h.replaceProxy("", domain, cfg); err != nil {
+		log.Error("Failed to save config", "err", err)
+		http.Redirect(w, r, "/proxies?error=save_failed", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/proxies?message=Route+added", http.StatusSeeOther)
+}
+
+func (h *Handler) handleUpdateProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/proxies", http.StatusSeeOther)
+		return
+	}
+
+	originalDomain := strings.TrimSpace(r.FormValue("original_domain"))
+	current, exists := h.cfg.Proxies[originalDomain]
+	if originalDomain == "" || !exists {
+		http.Redirect(w, r, "/proxies?error=route_not_found", http.StatusSeeOther)
+		return
+	}
+	domain, cfg, formError := parseRouteForm(r, current)
+	if formError != "" {
+		http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error="+formError, http.StatusSeeOther)
+		return
+	}
+	if domain != originalDomain {
+		if _, collision := h.cfg.Proxies[domain]; collision {
+			http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error=domain_exists", http.StatusSeeOther)
+			return
+		}
+	}
+	if err := h.replaceProxy(originalDomain, domain, cfg); err != nil {
+		log.Error("Failed to update route", "domain", originalDomain, "err", err)
+		http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error=save_failed", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/proxies?message=Route+updated", http.StatusSeeOther)
+}
+
+func parseRouteForm(r *http.Request, current *proxy.Config) (string, *proxy.Config, string) {
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))), ".")
+	if !validDomain(domain, false) {
+		return "", nil, "invalid_domain"
 	}
 
 	cfg := &proxy.Config{}
-	if proxyType == "proxy" {
+	if current != nil {
+		*cfg = *current
+	}
+	cfg.Upstream = ""
+	cfg.Redirect = ""
+	cfg.Auth = false
+
+	switch r.FormValue("type") {
+	case "proxy":
 		upstream := strings.TrimSpace(r.FormValue("upstream"))
 		if !validHTTPURL(upstream) {
-			http.Redirect(w, r, "/proxies?error=invalid_upstream", http.StatusSeeOther)
-			return
+			return "", nil, "invalid_upstream"
 		}
 		cfg.Upstream = upstream
-	} else if proxyType == "redirect" {
+		cfg.Auth = r.FormValue("auth") == "on"
+	case "redirect":
 		redirect := strings.TrimSpace(r.FormValue("redirect"))
 		if !validHTTPURL(proxy.EnsureSchema(redirect)) {
-			http.Redirect(w, r, "/proxies?error=invalid_redirect", http.StatusSeeOther)
-			return
+			return "", nil, "invalid_redirect"
 		}
 		cfg.Redirect = redirect
-	} else {
-		http.Redirect(w, r, "/proxies?error=invalid_proxy_type", http.StatusSeeOther)
-		return
+	default:
+		return "", nil, "invalid_proxy_type"
 	}
-
-	cfg.Auth = r.FormValue("auth") == "on"
 
 	portalName := strings.TrimSpace(r.FormValue("portal_name"))
 	portalDescription := strings.TrimSpace(r.FormValue("portal_description"))
@@ -712,22 +828,20 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 	portalOrderRaw := strings.TrimSpace(r.FormValue("portal_order"))
 	portalHidden := r.FormValue("portal_hidden") == "on"
 	if !validPortalIcon(portalIcon) {
-		http.Redirect(w, r, "/proxies?error=invalid_portal_icon", http.StatusSeeOther)
-		return
+		return "", nil, "invalid_portal_icon"
 	}
 	if portalKind != "" && normalizeRouteKind(portalKind) == "" {
-		http.Redirect(w, r, "/proxies?error=invalid_portal_kind", http.StatusSeeOther)
-		return
+		return "", nil, "invalid_portal_kind"
 	}
 	portalOrder := 0
 	if portalOrderRaw != "" {
 		value, err := strconv.Atoi(portalOrderRaw)
 		if err != nil {
-			http.Redirect(w, r, "/proxies?error=invalid_portal_order", http.StatusSeeOther)
-			return
+			return "", nil, "invalid_portal_order"
 		}
 		portalOrder = value
 	}
+	cfg.Portal = nil
 	if portalName != "" || portalDescription != "" || portalIcon != "" || portalKind != "" || portalGroup != "" || portalOrder != 0 || portalHidden {
 		cfg.Portal = &proxy.PortalConfig{
 			Name:        portalName,
@@ -739,19 +853,25 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 			Hidden:      portalHidden,
 		}
 	}
+	return domain, cfg, ""
+}
 
-	if h.cfg.Proxies == nil {
-		h.cfg.Proxies = make(map[string]*proxy.Config)
+func (h *Handler) replaceProxy(originalDomain, domain string, cfg *proxy.Config) error {
+	previous := h.cfg.Proxies
+	next := maps.Clone(previous)
+	if next == nil {
+		next = make(map[string]*proxy.Config)
 	}
-	h.cfg.Proxies[domain] = cfg
-
+	if originalDomain != "" {
+		delete(next, originalDomain)
+	}
+	next[domain] = cfg
+	h.cfg.Proxies = next
 	if err := h.saveAndReload(); err != nil {
-		log.Error("Failed to save config", "err", err)
-		http.Redirect(w, r, "/proxies?error=save_failed", http.StatusSeeOther)
-		return
+		h.cfg.Proxies = previous
+		return err
 	}
-
-	http.Redirect(w, r, "/proxies", http.StatusSeeOther)
+	return nil
 }
 
 func (h *Handler) handleDeleteProxy(w http.ResponseWriter, r *http.Request) {
