@@ -12,9 +12,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"html/template"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -29,7 +29,6 @@ import (
 	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
-	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/abcdlsj/nexo/pkg/traffic"
 	"github.com/charmbracelet/log"
 	"golang.org/x/crypto/bcrypt"
@@ -39,6 +38,12 @@ import (
 const (
 	maxWebUIRequestSize   = 1 << 20 // 1 MiB is ample for all management forms.
 	trafficAPIRecordLimit = 100
+)
+
+var (
+	errRouteNotFound = errors.New("route not found")
+	errDomainExists  = errors.New("domain already exists")
+	errInvalidForm   = errors.New("invalid route form")
 )
 
 var (
@@ -60,12 +65,9 @@ type loginAttempt struct {
 }
 
 type Handler struct {
-	cfg            *config.Config
-	cfgPath        string
+	configs        *configStore
 	certMgr        *cert.Manager
 	authMgr        *auth.Manager
-	proxies        map[string]*proxy.Handler
-	onChange       func() error
 	rateLimiter    *RateLimiter
 	loginAttempts  map[string]*loginAttempt
 	loginMu        sync.RWMutex
@@ -73,7 +75,7 @@ type Handler struct {
 	routeDiscovery *routeDiscoverer
 }
 
-func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error, trafficMgr *traffic.Manager) *Handler {
+func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, onChange func() error, trafficMgr *traffic.Manager) *Handler {
 	rlConfig := &RateLimitConfig{
 		Enabled:  cfg.Security.RateLimitEnabled,
 		Requests: cfg.Security.RateLimitRequests,
@@ -87,12 +89,9 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 	}
 
 	handler := &Handler{
-		cfg:            cfg,
-		cfgPath:        cfgPath,
+		configs:        newConfigStore(cfg, cfgPath, onChange),
 		certMgr:        certMgr,
 		authMgr:        authMgr,
-		proxies:        proxies,
-		onChange:       onChange,
 		rateLimiter:    NewRateLimiter(rlConfig),
 		loginAttempts:  make(map[string]*loginAttempt),
 		trafficMgr:     trafficMgr,
@@ -103,6 +102,25 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 	go handler.cleanupLoginAttempts()
 
 	return handler
+}
+
+func (h *Handler) config() *config.Config {
+	if h == nil || h.configs == nil {
+		return &config.Config{}
+	}
+	return h.configs.snapshot()
+}
+
+// SetConfig publishes a new immutable snapshot after an external reload.
+func (h *Handler) SetConfig(cfg *config.Config) {
+	if h == nil {
+		return
+	}
+	if h.configs == nil {
+		h.configs = newConfigStore(cfg, "", nil)
+		return
+	}
+	h.configs.replace(cfg)
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -144,7 +162,7 @@ func (h *Handler) securityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Cache-Control", "no-store")
-		if h.cfg != nil && h.cfg.IsIPBlocked(getClientIP(r)) {
+		if h.config().IsIPBlocked(getClientIP(r)) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -158,7 +176,7 @@ func (h *Handler) securityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // authMiddleware checks if user is authenticated and validates CSRF for POST
 func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.cfg.WebUI.Password != "" {
+		if h.config().WebUI.Password != "" {
 			cookie, err := r.Cookie("nexo_session")
 			if err != nil || !h.validateSession(cookie.Value) {
 				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(safeLocalRedirect(r.URL.RequestURI())), http.StatusSeeOther)
@@ -184,7 +202,7 @@ func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 // validateSession validates the session token using HMAC
 func (h *Handler) validateSession(token string) bool {
-	if h.cfg.WebUI.Password == "" {
+	if h.config().WebUI.Password == "" {
 		return false
 	}
 	// Token format: timestamp:nonce:signature
@@ -244,7 +262,7 @@ func (h *Handler) generateCSRFToken() string {
 		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
 	nonceStr := hex.EncodeToString(nonce)
-	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac := hmac.New(sha256.New, []byte(h.config().WebUI.Password))
 	mac.Write([]byte(nonceStr))
 	return nonceStr + ":" + hex.EncodeToString(mac.Sum(nil))
 }
@@ -254,7 +272,7 @@ func (h *Handler) validateCSRFToken(token string) bool {
 	if len(parts) != 2 {
 		return false
 	}
-	mac := hmac.New(sha256.New, []byte(h.cfg.WebUI.Password))
+	mac := hmac.New(sha256.New, []byte(h.config().WebUI.Password))
 	mac.Write([]byte(parts[0]))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
@@ -278,10 +296,11 @@ func (h *Handler) getOrCreateCSRFToken(w http.ResponseWriter, r *http.Request) s
 }
 
 func (h *Handler) csrfKey() []byte {
-	if h.cfg.WebUI.Password != "" {
-		return []byte(h.cfg.WebUI.Password)
+	cfg := h.config()
+	if cfg.WebUI.Password != "" {
+		return []byte(cfg.WebUI.Password)
 	}
-	return []byte(h.cfg.Auth.SecretKey)
+	return []byte(cfg.Auth.SecretKey)
 }
 
 func requestIsSecure(r *http.Request) bool {
@@ -300,7 +319,7 @@ func (h *Handler) newPageData(r *http.Request, activeNav string) PageData {
 	csrfToken, _ := r.Context().Value(csrfContextKey{}).(string)
 	return PageData{
 		ActiveNav: activeNav,
-		Config:    h.cfg,
+		Config:    h.config(),
 		CSRFToken: csrfToken,
 	}
 }
@@ -313,7 +332,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// If no password is configured, redirect to home
-	if h.cfg.WebUI.Password == "" {
+	if h.config().WebUI.Password == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -336,7 +355,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}{
 		PageData: PageData{
 			ActiveNav: "",
-			Config:    h.cfg,
+			Config:    h.config(),
 			CSRFToken: csrfToken,
 		},
 		Redirect: safeLocalRedirect(r.URL.Query().Get("redirect")),
@@ -393,7 +412,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 // validateCredentials validates username and password
 func (h *Handler) validateCredentials(username, password string) bool {
 	// Check username
-	expectedUsername := h.cfg.WebUI.Username
+	cfg := h.config()
+	expectedUsername := cfg.WebUI.Username
 	if expectedUsername == "" {
 		expectedUsername = "admin"
 	}
@@ -402,7 +422,7 @@ func (h *Handler) validateCredentials(username, password string) bool {
 	}
 
 	// Check password using bcrypt
-	err := bcrypt.CompareHashAndPassword([]byte(h.cfg.WebUI.Password), []byte(password))
+	err := bcrypt.CompareHashAndPassword([]byte(cfg.WebUI.Password), []byte(password))
 	return err == nil
 }
 
@@ -436,461 +456,12 @@ func (h *Handler) render404(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
 	data := PageData{
 		ActiveNav: "",
-		Config:    h.cfg,
+		Config:    h.config(),
 	}
 	if err := tmpl.ExecuteTemplate(w, "404.html", data); err != nil {
 		log.Error("Failed to render 404", "err", err)
 		http.Error(w, "404 Not Found", http.StatusNotFound)
 	}
-}
-
-type DashboardData struct {
-	PageData
-	Routes          []RouteView
-	ProtectedRoutes int
-}
-
-// RouteView is the stable, presentation-only form of a configured route.
-type RouteView struct {
-	Domain      string
-	Name        string
-	Description string
-	IconURL     string
-	Initial     string
-	Group       string
-	Target      string
-	Kind        string
-	Policy      string
-	Href        string
-	Order       int
-	Auth        bool
-	Unavailable bool
-}
-
-func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
-	return buildRouteViewsWithDiscovery(proxies, nil)
-}
-
-func buildRouteViewsWithDiscovery(proxies map[string]*proxy.Config, discoveries map[string]routeDiscoveryResult) []RouteView {
-	routes := make([]RouteView, 0, len(proxies))
-	for domain, cfg := range proxies {
-		if cfg == nil || (cfg.Portal != nil && cfg.Portal.Hidden) || (cfg.Portal == nil && (cfg.Redirect != "" || isApexDomain(domain))) {
-			continue
-		}
-
-		name := defaultRouteName(domain)
-		description := ""
-		kind := "SERVICE"
-		target := cfg.Upstream
-		group := "default"
-		order := 0
-		if discovery, ok := discoveries[domain]; ok {
-			if value := normalizeRouteKind(discovery.Kind); value != "" {
-				kind = value
-			}
-		}
-		if cfg.Redirect != "" {
-			kind = "REDIRECT"
-			target = cfg.Redirect
-		}
-		if cfg.Portal != nil {
-			if value := strings.TrimSpace(cfg.Portal.Name); value != "" {
-				name = value
-			}
-			if value := strings.TrimSpace(cfg.Portal.Description); value != "" {
-				description = value
-			}
-			if value := strings.TrimSpace(cfg.Portal.Group); value != "" {
-				group = value
-			}
-			if cfg.Redirect == "" {
-				if value := normalizeRouteKind(cfg.Portal.Kind); value != "" {
-					kind = value
-				}
-			}
-			order = cfg.Portal.Order
-		}
-		policy := "PUBLIC"
-		if cfg.Auth {
-			policy = "OAUTH"
-		}
-		discovery := discoveries[domain]
-		iconURL := portalIconURL(domain, cfg.Portal)
-		if automaticPortalIcon(cfg.Portal) && len(discovery.Icon) == 0 {
-			iconURL = ""
-		}
-		routes = append(routes, RouteView{
-			Domain:      domain,
-			Name:        name,
-			Description: description,
-			IconURL:     iconURL,
-			Initial:     routeInitial(name),
-			Group:       group,
-			Target:      target,
-			Kind:        kind,
-			Policy:      policy,
-			Href:        "https://" + domain,
-			Order:       order,
-			Auth:        cfg.Auth,
-			Unavailable: discovery.Unavailable,
-		})
-	}
-
-	slices.SortFunc(routes, func(a, b RouteView) int {
-		if a.Order != b.Order {
-			if a.Order == 0 {
-				return 1
-			}
-			if b.Order == 0 {
-				return -1
-			}
-			if a.Order < b.Order {
-				return -1
-			}
-			return 1
-		}
-		if result := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); result != 0 {
-			return result
-		}
-		return strings.Compare(a.Domain, b.Domain)
-	})
-	return routes
-}
-
-func defaultRouteName(domain string) string {
-	label := strings.SplitN(domain, ".", 2)[0]
-	words := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '_' })
-	for i, word := range words {
-		letters := []rune(word)
-		if len(letters) > 0 {
-			letters[0] = []rune(strings.ToUpper(string(letters[0])))[0]
-			words[i] = string(letters)
-		}
-	}
-	if len(words) == 0 {
-		return domain
-	}
-	return strings.Join(words, " ")
-}
-
-func routeInitial(name string) string {
-	letters := []rune(strings.TrimSpace(name))
-	if len(letters) == 0 {
-		return "N"
-	}
-	return strings.ToUpper(string(letters[0]))
-}
-
-func portalIconURL(domain string, portal *proxy.PortalConfig) string {
-	fallback := "/api/route-icon?domain=" + url.QueryEscape(domain)
-	if portal == nil {
-		return fallback
-	}
-	raw := strings.TrimSpace(portal.Icon)
-	if raw == "" || strings.EqualFold(raw, "auto") {
-		return fallback
-	}
-	if validPortalIcon(raw) {
-		return raw
-	}
-	return fallback
-}
-
-func automaticPortalIcon(portal *proxy.PortalConfig) bool {
-	if portal == nil {
-		return true
-	}
-	raw := strings.TrimSpace(portal.Icon)
-	return raw == "" || strings.EqualFold(raw, "auto") || !validPortalIcon(raw)
-}
-
-func validPortalIcon(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.EqualFold(raw, "auto") {
-		return true
-	}
-	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
-		return true
-	}
-	return validHTTPURL(raw)
-}
-
-type CertInfo struct {
-	Domain         string
-	Status         string
-	ExpiryDate     string
-	DaysLeft       int
-	Issuer         string
-	UsesWildcard   bool   // whether using a wildcard certificate
-	WildcardDomain string // the wildcard domain used (if any)
-}
-
-func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		h.render404(w)
-		return
-	}
-
-	discoveries := h.discoverRoutes(r.Context())
-	data := DashboardData{
-		PageData: h.newPageData(r, "dashboard"),
-		Routes:   buildRouteViewsWithDiscovery(h.cfg.Proxies, discoveries),
-	}
-
-	for _, route := range data.Routes {
-		if route.Auth {
-			data.ProtectedRoutes++
-		}
-	}
-
-	if err := tmpl.ExecuteTemplate(w, "dashboard.html", data); err != nil {
-		log.Error("Failed to render dashboard", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
-}
-
-type ProxiesData struct {
-	PageData
-	Proxies      map[string]*proxy.Config
-	CreateEditor RouteEditorData
-	EditEditor   *RouteEditorData
-	Message      string
-	Error        string
-}
-
-type RouteEditorData struct {
-	ID        string
-	CSRFToken string
-	Form      RouteFormData
-}
-
-type RouteFormData struct {
-	Editing           bool
-	OriginalDomain    string
-	Domain            string
-	Type              string
-	Upstream          string
-	Redirect          string
-	Auth              bool
-	PortalName        string
-	PortalDescription string
-	PortalIcon        string
-	PortalKind        string
-	PortalGroup       string
-	PortalOrder       int
-	PortalHidden      bool
-}
-
-func newRouteFormData(domain string, cfg *proxy.Config) RouteFormData {
-	form := RouteFormData{Type: "proxy"}
-	if cfg == nil {
-		return form
-	}
-
-	form.Editing = true
-	form.OriginalDomain = domain
-	form.Domain = domain
-	form.Upstream = cfg.Upstream
-	form.Redirect = cfg.Redirect
-	form.Auth = cfg.Auth
-	if cfg.Upstream == "" && cfg.Redirect != "" {
-		form.Type = "redirect"
-	}
-	if cfg.Portal != nil {
-		form.PortalName = cfg.Portal.Name
-		form.PortalDescription = cfg.Portal.Description
-		form.PortalIcon = cfg.Portal.Icon
-		form.PortalKind = strings.ToLower(cfg.Portal.Kind)
-		form.PortalGroup = cfg.Portal.Group
-		form.PortalOrder = cfg.Portal.Order
-		form.PortalHidden = cfg.Portal.Hidden
-	}
-	return form
-}
-
-func (h *Handler) handleProxies(w http.ResponseWriter, r *http.Request) {
-	pageData := h.newPageData(r, "proxies")
-	csrfToken := pageData.CSRFToken
-	var editEditor *RouteEditorData
-	if editDomain := strings.TrimSpace(r.URL.Query().Get("edit")); editDomain != "" {
-		if cfg, ok := h.cfg.Proxies[editDomain]; ok {
-			editEditor = &RouteEditorData{ID: "edit-route", CSRFToken: csrfToken, Form: newRouteFormData(editDomain, cfg)}
-		}
-	}
-	data := ProxiesData{
-		PageData:     pageData,
-		Proxies:      h.cfg.Proxies,
-		CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: csrfToken, Form: newRouteFormData("", nil)},
-		EditEditor:   editEditor,
-		Message:      r.URL.Query().Get("message"),
-		Error:        r.URL.Query().Get("error"),
-	}
-
-	if err := tmpl.ExecuteTemplate(w, "proxies.html", data); err != nil {
-		log.Error("Failed to render proxies", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
-}
-
-func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/proxies", http.StatusSeeOther)
-		return
-	}
-
-	domain, cfg, formError := parseRouteForm(r, nil)
-	if formError != "" {
-		http.Redirect(w, r, "/proxies?error="+formError, http.StatusSeeOther)
-		return
-	}
-	if _, exists := h.cfg.Proxies[domain]; exists {
-		http.Redirect(w, r, "/proxies?error=domain_exists", http.StatusSeeOther)
-		return
-	}
-	if err := h.replaceProxy("", domain, cfg); err != nil {
-		log.Error("Failed to save config", "err", err)
-		http.Redirect(w, r, "/proxies?error=save_failed", http.StatusSeeOther)
-		return
-	}
-
-	http.Redirect(w, r, "/proxies?message=Route+added", http.StatusSeeOther)
-}
-
-func (h *Handler) handleUpdateProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/proxies", http.StatusSeeOther)
-		return
-	}
-
-	originalDomain := strings.TrimSpace(r.FormValue("original_domain"))
-	current, exists := h.cfg.Proxies[originalDomain]
-	if originalDomain == "" || !exists {
-		http.Redirect(w, r, "/proxies?error=route_not_found", http.StatusSeeOther)
-		return
-	}
-	domain, cfg, formError := parseRouteForm(r, current)
-	if formError != "" {
-		http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error="+formError, http.StatusSeeOther)
-		return
-	}
-	if domain != originalDomain {
-		if _, collision := h.cfg.Proxies[domain]; collision {
-			http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error=domain_exists", http.StatusSeeOther)
-			return
-		}
-	}
-	if err := h.replaceProxy(originalDomain, domain, cfg); err != nil {
-		log.Error("Failed to update route", "domain", originalDomain, "err", err)
-		http.Redirect(w, r, "/proxies?edit="+url.QueryEscape(originalDomain)+"&error=save_failed", http.StatusSeeOther)
-		return
-	}
-
-	http.Redirect(w, r, "/proxies?message=Route+updated", http.StatusSeeOther)
-}
-
-func parseRouteForm(r *http.Request, current *proxy.Config) (string, *proxy.Config, string) {
-	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))), ".")
-	if !validDomain(domain, false) {
-		return "", nil, "invalid_domain"
-	}
-
-	cfg := &proxy.Config{}
-	if current != nil {
-		*cfg = *current
-	}
-	cfg.Upstream = ""
-	cfg.Redirect = ""
-	cfg.Auth = false
-
-	switch r.FormValue("type") {
-	case "proxy":
-		upstream := strings.TrimSpace(r.FormValue("upstream"))
-		if !validHTTPURL(upstream) {
-			return "", nil, "invalid_upstream"
-		}
-		cfg.Upstream = upstream
-		cfg.Auth = r.FormValue("auth") == "on"
-	case "redirect":
-		redirect := strings.TrimSpace(r.FormValue("redirect"))
-		if !validHTTPURL(proxy.EnsureSchema(redirect)) {
-			return "", nil, "invalid_redirect"
-		}
-		cfg.Redirect = redirect
-	default:
-		return "", nil, "invalid_proxy_type"
-	}
-
-	portalName := strings.TrimSpace(r.FormValue("portal_name"))
-	portalDescription := strings.TrimSpace(r.FormValue("portal_description"))
-	portalIcon := strings.TrimSpace(r.FormValue("portal_icon"))
-	portalKind := strings.TrimSpace(r.FormValue("portal_kind"))
-	portalGroup := strings.TrimSpace(r.FormValue("portal_group"))
-	portalOrderRaw := strings.TrimSpace(r.FormValue("portal_order"))
-	portalHidden := r.FormValue("portal_hidden") == "on"
-	if !validPortalIcon(portalIcon) {
-		return "", nil, "invalid_portal_icon"
-	}
-	if portalKind != "" && normalizeRouteKind(portalKind) == "" {
-		return "", nil, "invalid_portal_kind"
-	}
-	portalOrder := 0
-	if portalOrderRaw != "" {
-		value, err := strconv.Atoi(portalOrderRaw)
-		if err != nil {
-			return "", nil, "invalid_portal_order"
-		}
-		portalOrder = value
-	}
-	cfg.Portal = nil
-	if portalName != "" || portalDescription != "" || portalIcon != "" || portalKind != "" || portalGroup != "" || portalOrder != 0 || portalHidden {
-		cfg.Portal = &proxy.PortalConfig{
-			Name:        portalName,
-			Description: portalDescription,
-			Icon:        portalIcon,
-			Kind:        normalizeRouteKind(portalKind),
-			Group:       portalGroup,
-			Order:       portalOrder,
-			Hidden:      portalHidden,
-		}
-	}
-	return domain, cfg, ""
-}
-
-func (h *Handler) replaceProxy(originalDomain, domain string, cfg *proxy.Config) error {
-	previous := h.cfg.Proxies
-	next := maps.Clone(previous)
-	if next == nil {
-		next = make(map[string]*proxy.Config)
-	}
-	if originalDomain != "" {
-		delete(next, originalDomain)
-	}
-	next[domain] = cfg
-	h.cfg.Proxies = next
-	if err := h.saveAndReload(); err != nil {
-		h.cfg.Proxies = previous
-		return err
-	}
-	return nil
-}
-
-func (h *Handler) handleDeleteProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/proxies", http.StatusSeeOther)
-		return
-	}
-
-	domain := r.FormValue("domain")
-	if domain != "" {
-		delete(h.cfg.Proxies, domain)
-		if err := h.saveAndReload(); err != nil {
-			log.Error("Failed to save config", "err", err)
-			http.Redirect(w, r, "/proxies?error=save_failed", http.StatusSeeOther)
-			return
-		}
-	}
-
-	http.Redirect(w, r, "/proxies", http.StatusSeeOther)
 }
 
 type CertsData struct {
@@ -901,6 +472,7 @@ type CertsData struct {
 }
 
 func (h *Handler) handleCerts(w http.ResponseWriter, r *http.Request) {
+	cfg := h.config()
 	var lastRenewal string
 	if h.certMgr != nil {
 		t := h.certMgr.LastRenewalCheck()
@@ -911,8 +483,8 @@ func (h *Handler) handleCerts(w http.ResponseWriter, r *http.Request) {
 
 	data := CertsData{
 		PageData:    h.newPageData(r, "certs"),
-		Wildcards:   h.cfg.Wildcards,
-		Certs:       h.getCertInfo(),
+		Wildcards:   cfg.Wildcards,
+		Certs:       h.getCertInfo(cfg),
 		LastRenewal: lastRenewal,
 	}
 
@@ -949,15 +521,16 @@ type ConfigData struct {
 }
 
 func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := h.config()
 	data := ConfigData{
 		PageData:       h.newPageData(r, "config"),
 		Message:        r.URL.Query().Get("message"),
 		Error:          r.URL.Query().Get("error"),
-		MaskedAPIToken: maskAPIToken(h.cfg.Cloudflare.APIToken),
+		MaskedAPIToken: maskAPIToken(cfg.Cloudflare.APIToken),
 	}
 
-	if h.cfgPath != "" {
-		content, err := os.ReadFile(h.cfgPath)
+	if h.configs.path != "" {
+		content, err := os.ReadFile(h.configs.path)
 		if err == nil {
 			data.RawConfig = maskSensitiveConfig(string(content))
 		}
@@ -975,21 +548,19 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	section := r.FormValue("section")
-	switch section {
-	case "basic":
-		email := strings.TrimSpace(r.FormValue("email"))
-		if email != "" {
-			h.cfg.Email = email
+	if err := h.configs.update(func(next *config.Config) error {
+		switch r.FormValue("section") {
+		case "basic":
+			if email := strings.TrimSpace(r.FormValue("email")); email != "" {
+				next.Email = email
+			}
+		case "cloudflare":
+			if token := strings.TrimSpace(r.FormValue("api_token")); token != "" {
+				next.Cloudflare.APIToken = token
+			}
 		}
-	case "cloudflare":
-		token := strings.TrimSpace(r.FormValue("api_token"))
-		if token != "" {
-			h.cfg.Cloudflare.APIToken = token
-		}
-	}
-
-	if err := h.saveAndReload(); err != nil {
+		return nil
+	}); err != nil {
 		log.Error("Failed to save config", "err", err)
 		http.Redirect(w, r, "/config?message=Failed+to+save+config", http.StatusSeeOther)
 		return
@@ -1006,13 +577,15 @@ func (h *Handler) handleAddWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := strings.TrimSpace(r.FormValue("wildcard"))
 	if validDomain(wildcard, true) {
-		if !slices.Contains(h.cfg.Wildcards, wildcard) {
-			h.cfg.Wildcards = append(h.cfg.Wildcards, wildcard)
-			if err := h.saveAndReload(); err != nil {
-				log.Error("Failed to save config", "err", err)
-				http.Redirect(w, r, "/config?error=save_failed", http.StatusSeeOther)
-				return
+		if err := h.configs.update(func(next *config.Config) error {
+			if !slices.Contains(next.Wildcards, wildcard) {
+				next.Wildcards = append(next.Wildcards, wildcard)
 			}
+			return nil
+		}); err != nil {
+			log.Error("Failed to save config", "err", err)
+			http.Redirect(w, r, "/config?error=save_failed", http.StatusSeeOther)
+			return
 		}
 	}
 
@@ -1027,10 +600,10 @@ func (h *Handler) handleDeleteWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := r.FormValue("wildcard")
 	if wildcard != "" {
-		h.cfg.Wildcards = slices.DeleteFunc(h.cfg.Wildcards, func(w string) bool {
-			return w == wildcard
-		})
-		if err := h.saveAndReload(); err != nil {
+		if err := h.configs.update(func(next *config.Config) error {
+			next.Wildcards = slices.DeleteFunc(next.Wildcards, func(w string) bool { return w == wildcard })
+			return nil
+		}); err != nil {
 			log.Error("Failed to save config", "err", err)
 			http.Redirect(w, r, "/config?error=save_failed", http.StatusSeeOther)
 			return
@@ -1055,17 +628,16 @@ func (h *Handler) handleRegenerateSecretKey(w http.ResponseWriter, r *http.Reque
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(b)
 
-	h.cfg.Auth.SecretKey = newKey
-
-	// Update auth manager's secret key so existing sessions are invalidated immediately
-	if h.authMgr != nil {
-		h.authMgr.UpdateSecretKey(newKey)
-	}
-
-	if err := h.saveAndReload(); err != nil {
+	if err := h.configs.update(func(next *config.Config) error {
+		next.Auth.SecretKey = newKey
+		return nil
+	}); err != nil {
 		log.Error("Failed to save config", "err", err)
 		http.Redirect(w, r, "/config?error=Failed+to+save+config", http.StatusSeeOther)
 		return
+	}
+	if h.authMgr != nil {
+		h.authMgr.UpdateSecretKey(newKey)
 	}
 
 	log.Info("Secret key regenerated")
@@ -1089,23 +661,23 @@ func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (h *Handler) getCertInfo() []CertInfo {
+func (h *Handler) getCertInfo(cfg *config.Config) []CertInfo {
 	var certs []CertInfo
 
-	if h.cfg.CertDir == "" {
+	if cfg.CertDir == "" {
 		return certs
 	}
 
 	domains := make(map[string]bool)
-	for domain := range h.cfg.Proxies {
+	for domain := range cfg.Proxies {
 		domains[domain] = true
 	}
-	for _, w := range h.cfg.Wildcards {
+	for _, w := range cfg.Wildcards {
 		domains[w] = true
 	}
 
 	for domain := range domains {
-		info := h.getCertForDomain(domain)
+		info := h.getCertForDomain(cfg, domain)
 		if info.Domain != "" {
 			certs = append(certs, info)
 		}
@@ -1114,7 +686,7 @@ func (h *Handler) getCertInfo() []CertInfo {
 	return certs
 }
 
-func (h *Handler) getCertForDomain(domain string) CertInfo {
+func (h *Handler) getCertForDomain(cfg *config.Config, domain string) CertInfo {
 	info := CertInfo{
 		Domain: domain,
 		Status: "error",
@@ -1123,23 +695,23 @@ func (h *Handler) getCertForDomain(domain string) CertInfo {
 	// For wildcard domains like *.example.com, look for example.com.crt
 	if strings.HasPrefix(domain, "*.") {
 		baseDomain := domain[2:]
-		certFile := filepath.Join(h.cfg.CertDir, baseDomain+".crt")
-		keyFile := filepath.Join(h.cfg.CertDir, baseDomain+".key")
+		certFile := filepath.Join(cfg.CertDir, baseDomain+".crt")
+		keyFile := filepath.Join(cfg.CertDir, baseDomain+".key")
 		return h.readCertInfo(domain, certFile, keyFile)
 	}
 
 	// For regular domains, first try exact match
-	certFile := filepath.Join(h.cfg.CertDir, domain+".crt")
-	keyFile := filepath.Join(h.cfg.CertDir, domain+".key")
+	certFile := filepath.Join(cfg.CertDir, domain+".crt")
+	keyFile := filepath.Join(cfg.CertDir, domain+".key")
 	if _, err := os.Stat(certFile); err == nil {
 		return h.readCertInfo(domain, certFile, keyFile)
 	}
 
 	// If no exact match, try wildcard match using config method
-	if wild, ok := h.cfg.GetWildcardDomain(domain); ok {
+	if wild, ok := cfg.GetWildcardDomain(domain); ok {
 		baseDomain := wild[2:] // Remove "*." prefix
-		certFile = filepath.Join(h.cfg.CertDir, baseDomain+".crt")
-		keyFile = filepath.Join(h.cfg.CertDir, baseDomain+".key")
+		certFile = filepath.Join(cfg.CertDir, baseDomain+".crt")
+		keyFile = filepath.Join(cfg.CertDir, baseDomain+".key")
 		if _, err := os.Stat(certFile); err == nil {
 			info = h.readCertInfo(domain, certFile, keyFile)
 			info.UsesWildcard = true
@@ -1196,22 +768,6 @@ func (h *Handler) readCertInfo(domain, certFile, keyFile string) CertInfo {
 	return info
 }
 
-func (h *Handler) saveAndReload() error {
-	data, err := yaml.Marshal(h.cfg)
-	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
-	}
-	if err := writeFileAtomic(h.cfgPath, data, 0600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-	if h.onChange != nil {
-		if err := h.onChange(); err != nil {
-			return fmt.Errorf("reload: %w", err)
-		}
-	}
-	return nil
-}
-
 // checkLoginAllowed checks if login is allowed for the IP/username
 func (h *Handler) checkLoginAllowed(ip, username string) (bool, time.Duration) {
 	key := ip + ":" + username
@@ -1248,13 +804,14 @@ func (h *Handler) recordLoginFailure(ip, username string) {
 	attempt.count++
 	attempt.lastAttempt = time.Now()
 
-	maxAttempts := h.cfg.Security.MaxLoginAttempts
+	cfg := h.config()
+	maxAttempts := cfg.Security.MaxLoginAttempts
 	if maxAttempts == 0 {
 		maxAttempts = 5
 	}
 
 	if attempt.count >= maxAttempts {
-		lockoutMinutes := h.cfg.Security.LoginLockoutMinutes
+		lockoutMinutes := cfg.Security.LoginLockoutMinutes
 		if lockoutMinutes == 0 {
 			lockoutMinutes = 30
 		}
@@ -1302,41 +859,32 @@ func (h *Handler) handleUpdateSecurity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse form values
-	h.cfg.Security.RateLimitEnabled = r.FormValue("rate_limit_enabled") == "on"
-	if reqStr := r.FormValue("rate_limit_requests"); reqStr != "" {
-		if req, err := strconv.Atoi(reqStr); err == nil && req > 0 {
-			h.cfg.Security.RateLimitRequests = req
+	if err := h.configs.update(func(next *config.Config) error {
+		next.Security.RateLimitEnabled = r.FormValue("rate_limit_enabled") == "on"
+		if value, err := strconv.Atoi(r.FormValue("rate_limit_requests")); err == nil && value > 0 {
+			next.Security.RateLimitRequests = value
 		}
-	}
-	if windowStr := r.FormValue("rate_limit_window"); windowStr != "" {
-		if window, err := strconv.Atoi(windowStr); err == nil && window > 0 {
-			h.cfg.Security.RateLimitWindow = window
+		if value, err := strconv.Atoi(r.FormValue("rate_limit_window")); err == nil && value > 0 {
+			next.Security.RateLimitWindow = value
 		}
-	}
-	if maxAttemptsStr := r.FormValue("max_login_attempts"); maxAttemptsStr != "" {
-		if maxAttempts, err := strconv.Atoi(maxAttemptsStr); err == nil && maxAttempts > 0 {
-			h.cfg.Security.MaxLoginAttempts = maxAttempts
+		if value, err := strconv.Atoi(r.FormValue("max_login_attempts")); err == nil && value > 0 {
+			next.Security.MaxLoginAttempts = value
 		}
-	}
-	if lockoutStr := r.FormValue("login_lockout_minutes"); lockoutStr != "" {
-		if lockout, err := strconv.Atoi(lockoutStr); err == nil && lockout > 0 {
-			h.cfg.Security.LoginLockoutMinutes = lockout
+		if value, err := strconv.Atoi(r.FormValue("login_lockout_minutes")); err == nil && value > 0 {
+			next.Security.LoginLockoutMinutes = value
 		}
-	}
-
-	// Update rate limiter config
-	h.rateLimiter.UpdateConfig(RateLimitConfig{
-		Enabled:  h.cfg.Security.RateLimitEnabled,
-		Requests: h.cfg.Security.RateLimitRequests,
-		Window:   time.Duration(h.cfg.Security.RateLimitWindow) * time.Second,
-	})
-
-	if err := h.saveAndReload(); err != nil {
+		return nil
+	}); err != nil {
 		log.Error("Failed to save security config", "err", err)
 		http.Redirect(w, r, "/config?error=Failed+to+save+security+config", http.StatusSeeOther)
 		return
 	}
+	security := h.config().Security
+	h.rateLimiter.UpdateConfig(RateLimitConfig{
+		Enabled:  security.RateLimitEnabled,
+		Requests: security.RateLimitRequests,
+		Window:   time.Duration(security.RateLimitWindow) * time.Second,
+	})
 
 	http.Redirect(w, r, "/config?message=Security+configuration+saved", http.StatusSeeOther)
 }

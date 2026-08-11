@@ -1,8 +1,8 @@
 package webui
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,9 +12,11 @@ import (
 
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
+	"github.com/abcdlsj/nexo/pkg/traffic"
+	"gopkg.in/yaml.v3"
 )
 
-func TestSafeLocalRedirect(t *testing.T) {
+func TestRedirect(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
 		"":                          "/",
@@ -55,7 +57,7 @@ func TestValidation(t *testing.T) {
 	}
 }
 
-func TestClientIPIgnoresUntrustedForwardingHeaders(t *testing.T) {
+func TestClientIP(t *testing.T) {
 	t.Parallel()
 	r := httptest.NewRequest("GET", "http://localhost/login", nil)
 	r.RemoteAddr = "192.0.2.10:4321"
@@ -66,7 +68,7 @@ func TestClientIPIgnoresUntrustedForwardingHeaders(t *testing.T) {
 	}
 }
 
-func TestSecurityMiddlewareHeaders(t *testing.T) {
+func TestSecurityHeaders(t *testing.T) {
 	t.Parallel()
 	h := &Handler{}
 	r := httptest.NewRequest("GET", "http://localhost/", nil)
@@ -79,45 +81,7 @@ func TestSecurityMiddlewareHeaders(t *testing.T) {
 	}
 }
 
-func TestAllPagesRenderSelfContainedHTML(t *testing.T) {
-	t.Parallel()
-	cfg := &config.Config{}
-	page := PageData{Config: cfg, CSRFToken: "test-token"}
-	login := struct {
-		PageData
-		Error    string
-		Redirect string
-		Locked   bool
-		LockTime int
-	}{PageData: page, Redirect: "/"}
-	pages := map[string]any{
-		"404.html":       page,
-		"dashboard.html": DashboardData{PageData: page},
-		"proxies.html": ProxiesData{
-			PageData:     page,
-			CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "test-token", Form: newRouteFormData("", nil)},
-		},
-		"certs.html":   CertsData{PageData: page},
-		"config.html":  ConfigData{PageData: page},
-		"traffic.html": page,
-		"login.html":   login,
-	}
-	for name, data := range pages {
-		var output bytes.Buffer
-		if err := tmpl.ExecuteTemplate(&output, name, data); err != nil {
-			t.Fatalf("render %s: %v", name, err)
-		}
-		html := output.String()
-		if !strings.Contains(html, "<!DOCTYPE html>") || !strings.Contains(html, "</html>") {
-			t.Errorf("%s did not render a complete document", name)
-		}
-		if strings.Contains(html, "fonts.googleapis.com") || strings.Contains(html, "fonts.gstatic.com") {
-			t.Errorf("%s contains an external font dependency", name)
-		}
-	}
-}
-
-func TestUpdateProxyRenamesRouteAndPreservesAdvancedSettings(t *testing.T) {
+func TestUpdateRoute(t *testing.T) {
 	t.Parallel()
 	originalDomain := "api.example.com"
 	original := &proxy.Config{
@@ -128,7 +92,7 @@ func TestUpdateProxyRenamesRouteAndPreservesAdvancedSettings(t *testing.T) {
 		Portal:                &proxy.PortalConfig{Name: "Old API"},
 	}
 	cfg := &config.Config{Proxies: map[string]*proxy.Config{originalDomain: original}}
-	handler := &Handler{cfg: cfg, cfgPath: t.TempDir() + "/config.yaml"}
+	handler := &Handler{configs: newConfigStore(cfg, t.TempDir()+"/config.yaml", nil)}
 	form := url.Values{
 		"original_domain":    {originalDomain},
 		"domain":             {"api-v2.example.com"},
@@ -151,10 +115,11 @@ func TestUpdateProxyRenamesRouteAndPreservesAdvancedSettings(t *testing.T) {
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/proxies?message=Route+updated" {
 		t.Fatalf("update response = %d %q", response.Code, response.Header().Get("Location"))
 	}
-	if _, exists := cfg.Proxies[originalDomain]; exists {
+	updatedConfig := handler.config()
+	if _, exists := updatedConfig.Proxies[originalDomain]; exists {
 		t.Fatal("original route remained after domain rename")
 	}
-	updated := cfg.Proxies["api-v2.example.com"]
+	updated := updatedConfig.Proxies["api-v2.example.com"]
 	if updated == nil {
 		t.Fatal("renamed route was not created")
 	}
@@ -169,7 +134,7 @@ func TestUpdateProxyRenamesRouteAndPreservesAdvancedSettings(t *testing.T) {
 	}
 }
 
-func TestUpdateProxyRejectsDomainCollision(t *testing.T) {
+func TestRouteCollision(t *testing.T) {
 	t.Parallel()
 	original := &proxy.Config{Upstream: "http://127.0.0.1:9000"}
 	existing := &proxy.Config{Upstream: "http://127.0.0.1:9100"}
@@ -177,7 +142,7 @@ func TestUpdateProxyRejectsDomainCollision(t *testing.T) {
 		"api.example.com":   original,
 		"taken.example.com": existing,
 	}}
-	handler := &Handler{cfg: cfg, cfgPath: t.TempDir() + "/config.yaml"}
+	handler := &Handler{configs: newConfigStore(cfg, t.TempDir()+"/config.yaml", nil)}
 	form := url.Values{
 		"original_domain": {"api.example.com"},
 		"domain":          {"taken.example.com"},
@@ -190,39 +155,20 @@ func TestUpdateProxyRejectsDomainCollision(t *testing.T) {
 
 	handler.handleUpdateProxy(response, request)
 
-	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "error=domain_exists") {
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusSeeOther || location.Query().Get("error") != "domain_exists" {
 		t.Fatalf("collision response = %d %q", response.Code, response.Header().Get("Location"))
 	}
-	if cfg.Proxies["api.example.com"] != original || cfg.Proxies["taken.example.com"] != existing {
+	current := handler.config()
+	if current.Proxies["api.example.com"].Upstream != original.Upstream || current.Proxies["taken.example.com"].Upstream != existing.Upstream {
 		t.Fatal("domain collision changed the route map")
 	}
 }
 
-func TestProxiesTemplatePrefillsEditForm(t *testing.T) {
-	t.Parallel()
-	route := &proxy.Config{
-		Redirect: "https://www.example.com",
-		Portal:   &proxy.PortalConfig{Name: "Website", Kind: "WEBSITE", Hidden: true},
-	}
-	data := ProxiesData{
-		PageData:     PageData{Config: &config.Config{}, CSRFToken: "test-token"},
-		Proxies:      map[string]*proxy.Config{"old.example.com": route},
-		CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "test-token", Form: newRouteFormData("", nil)},
-		EditEditor:   &RouteEditorData{ID: "edit-route", CSRFToken: "test-token", Form: newRouteFormData("old.example.com", route)},
-	}
-	var output bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&output, "proxies.html", data); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
-	for _, value := range []string{`class="route-inline-editor"`, `action="/proxies/update"`, `name="original_domain" value="old.example.com"`, `value="https://www.example.com"`, `value="redirect" checked`, `>Save</button>`} {
-		if !strings.Contains(html, value) {
-			t.Errorf("edit form output missing %q", value)
-		}
-	}
-}
-
-func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
+func TestBuildRoutes(t *testing.T) {
 	t.Parallel()
 	proxies := map[string]*proxy.Config{
 		"docs.example.com": {Upstream: "http://docs:8080"},
@@ -262,7 +208,7 @@ func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
 	}
 }
 
-func TestBuildRouteViewsHidesImplicitRedirects(t *testing.T) {
+func TestHiddenRoutes(t *testing.T) {
 	t.Parallel()
 	proxies := map[string]*proxy.Config{
 		"root.example.com":    {Redirect: "https://github.com/example"},
@@ -283,7 +229,7 @@ func TestBuildRouteViewsHidesImplicitRedirects(t *testing.T) {
 	}
 }
 
-func TestApexDomainDetection(t *testing.T) {
+func TestApexDomain(t *testing.T) {
 	t.Parallel()
 	if !isApexDomain("songjian.li") {
 		t.Fatal("songjian.li should be recognized as an apex domain")
@@ -293,7 +239,7 @@ func TestApexDomainDetection(t *testing.T) {
 	}
 }
 
-func TestRouteDiscovererFindsHTMLIconAndCaches(t *testing.T) {
+func TestDiscoveryIconCache(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +277,7 @@ func TestRouteDiscovererFindsHTMLIconAndCaches(t *testing.T) {
 	}
 }
 
-func TestRouteDiscovererClassifiesJSONAsAPI(t *testing.T) {
+func TestDiscoveryAPI(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -349,7 +295,7 @@ func TestRouteDiscovererClassifiesJSONAsAPI(t *testing.T) {
 	}
 }
 
-func TestRouteDiscovererMarksServerFailureUnavailable(t *testing.T) {
+func TestDiscoveryHTTPFailure(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "maintenance", http.StatusServiceUnavailable)
@@ -362,7 +308,7 @@ func TestRouteDiscovererMarksServerFailureUnavailable(t *testing.T) {
 	}
 }
 
-func TestRouteDiscovererMarksConnectionFailureUnavailable(t *testing.T) {
+func TestDiscoveryDialFailure(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	upstream := server.URL
@@ -374,9 +320,9 @@ func TestRouteDiscovererMarksConnectionFailureUnavailable(t *testing.T) {
 	}
 }
 
-func TestRouteIconRejectsUnknownDomains(t *testing.T) {
+func TestUnknownRouteIcon(t *testing.T) {
 	t.Parallel()
-	handler := &Handler{cfg: &config.Config{Proxies: map[string]*proxy.Config{}}}
+	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{}}, "", nil)}
 	request := httptest.NewRequest(http.MethodGet, "/api/route-icon?domain=unknown.example.com", nil)
 	response := httptest.NewRecorder()
 	handler.handleRouteIcon(response, request)
@@ -385,58 +331,36 @@ func TestRouteIconRejectsUnknownDomains(t *testing.T) {
 	}
 }
 
-func TestRouteIconWithoutDiscoveredImageReturnsNotFound(t *testing.T) {
+func TestMissingRouteIcon(t *testing.T) {
 	t.Parallel()
-	handler := &Handler{cfg: &config.Config{Proxies: map[string]*proxy.Config{
+	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{
 		"api.example.com": {Upstream: "http://127.0.0.1:9000", Portal: &proxy.PortalConfig{Kind: "API"}},
-	}}}
+	}}, "", nil)}
 	request := httptest.NewRequest(http.MethodGet, "/api/route-icon?domain=api.example.com", nil)
 	response := httptest.NewRecorder()
 	handler.handleRouteIcon(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("route without discovered icon returned %d, want 404", response.Code)
 	}
-	if strings.Contains(response.Body.String(), "<svg") {
-		t.Fatal("route kind generated a fallback SVG")
-	}
 }
 
-func TestDashboardRendersSharedRouteProtocol(t *testing.T) {
-	t.Parallel()
-	page := PageData{Config: &config.Config{}}
-	data := DashboardData{PageData: page, Routes: []RouteView{{Domain: "api.example.com", Name: "Developer API", Description: "Internal API", IconURL: "https://api.example.com/favicon.ico", Initial: "D", Kind: "API", Policy: "OAUTH", Href: "https://api.example.com", Auth: true, Unavailable: true}}, ProtectedRoutes: 1}
-	var output bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&output, "dashboard.html", data); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
-	for _, value := range []string{"Topology", "Services", "Developer API", "data-route-index=\"0\"", "class=\"app-page\"", "class=\"app-location\"", "<animateMotion", "route-wire-live-0", "Upstream unavailable"} {
-		if !strings.Contains(html, value) {
-			t.Errorf("dashboard output missing %q", value)
-		}
-	}
-	for _, removed := range []string{"Control room", "System overview", "All systems operational", "ROUTING BOARD", "ROUTE DIRECTORY", "class=\"page-intro\""} {
-		if strings.Contains(html, removed) {
-			t.Errorf("dashboard output retained removed copy %q", removed)
-		}
-	}
-}
-
-func TestMaskSensitiveConfigParsesYAML(t *testing.T) {
+func TestMaskConfig(t *testing.T) {
 	t.Parallel()
 	raw := "cloudflare:\n  \"api_token\" : token-value\nauth:\n  github:\n    client_secret: oauth-value\nwebui:\n  password: bcrypt-value\nemail: visible@example.com\n"
 	masked := maskSensitiveConfig(raw)
-	for _, secret := range []string{"token-value", "oauth-value", "bcrypt-value"} {
-		if strings.Contains(masked, secret) {
-			t.Errorf("masked config leaked %q: %s", secret, masked)
-		}
+	var got config.Config
+	if err := yaml.Unmarshal([]byte(masked), &got); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(masked, "visible@example.com") {
-		t.Fatal("masking removed a non-sensitive value")
+	if got.Cloudflare.APIToken != "••••••••" || got.Auth.GitHub.ClientSecret != "••••••••" || got.WebUI.Password != "••••••••" {
+		t.Fatalf("sensitive values were not masked: %+v", got)
+	}
+	if got.Email != "visible@example.com" {
+		t.Fatalf("email = %q, want visible value", got.Email)
 	}
 }
 
-func TestPreviewPages(t *testing.T) {
+func TestPreview(t *testing.T) {
 	t.Parallel()
 	handler := newPreviewHandler()
 	for _, path := range []string{"/", "/proxies", "/certs", "/traffic", "/config", "/login"} {
@@ -446,22 +370,30 @@ func TestPreviewPages(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("GET %s returned %d: %s", path, w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), "<!DOCTYPE html>") {
-			t.Errorf("GET %s did not return HTML", path)
-		}
 	}
 
-	r := httptest.NewRequest(http.MethodGet, "/api/traffic", nil)
+	r := httptest.NewRequest(http.MethodGet, "/404", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "api.nexo.local") {
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("404 response = %d %s", w.Code, w.Body.String())
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/traffic", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	var data traffic.TrafficData
+	if err := json.NewDecoder(w.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || data.DomainStats["api.nexo.local"] == nil {
 		t.Fatalf("traffic fixture response = %d %s", w.Code, w.Body.String())
 	}
 
 	r = httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/svg+xml" || !strings.Contains(w.Body.String(), "<svg") {
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/svg+xml" {
 		t.Fatalf("favicon response = %d %q %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
 }

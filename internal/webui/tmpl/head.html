@@ -9,21 +9,21 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
     :root {
-      --canvas: #f1f3f2;
-      --paper: #fffefb;
-      --ink: #151716;
-      --ink-soft: #555c59;
-      --line: #151716;
-      --line-soft: #b7bdb9;
-      --wash: #e4e8e5;
-      --blue: #4c78ff;
-      --blue-soft: #dce5ff;
-      --yellow: #f8df54;
-      --yellow-soft: #fff5bd;
-      --coral: #ff6f61;
-      --coral-soft: #ffe0dc;
-      --green: #65d28a;
-      --green-soft: #dff7e7;
+      --canvas: #ffffff;
+      --paper: #ffffff;
+      --ink: #363636;
+      --ink-soft: #666666;
+      --line: #363636;
+      --line-soft: #dbdbdb;
+      --wash: #f7f7f7;
+      --blue: #0076d1;
+      --blue-soft: #edf6fc;
+      --yellow: #f0f0f0;
+      --yellow-soft: #f7f7f7;
+      --coral: #c84b55;
+      --coral-soft: #f9e5e7;
+      --green: #187653;
+      --green-soft: #def2e9;
       --background: var(--canvas);
       --foreground: var(--ink);
       --card: var(--paper);
@@ -47,55 +47,55 @@
       --ring: var(--blue);
       --text-muted: var(--ink-soft);
       --primary-color: var(--blue);
-      --shadow: 3px 3px 0 var(--line);
-      --shadow-sm: 2px 2px 0 var(--line);
-      --radius: 4px;
-      --display-font: "Avenir Next Condensed", "Franklin Gothic Medium", sans-serif;
-      --body-font: "Avenir Next", "Trebuchet MS", sans-serif;
+      --shadow: none;
+      --shadow-sm: none;
+      --radius: 2px;
+      --display-font: Avenir, "Avenir Next", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --body-font: var(--display-font);
       --mono-font: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     }
 
     [data-theme="dark"] {
-      --canvas: #181a19;
-      --paper: #232624;
-      --ink: #f4f5f2;
-      --ink-soft: #b7bdb9;
-      --line: #f4f5f2;
-      --line-soft: #555b58;
-      --wash: #303431;
-      --blue: #7698ff;
-      --blue-soft: #29375f;
-      --yellow: #f8df54;
-      --yellow-soft: #554c22;
-      --coral: #ff8075;
-      --coral-soft: #57302d;
-      --green: #75df98;
-      --green-soft: #244a31;
+      --canvas: #202b38;
+      --paper: #18232d;
+      --ink: #f2f5f7;
+      --ink-soft: #9eabb6;
+      --line: #f2f5f7;
+      --line-soft: #40566a;
+      --wash: #243342;
+      --blue: #52b5f5;
+      --blue-soft: #163e59;
+      --yellow: #293744;
+      --yellow-soft: #24313d;
+      --coral: #ff7d87;
+      --coral-soft: #4e2d35;
+      --green: #63d3a2;
+      --green-soft: #183e33;
       --primary-foreground: #111;
-      --shadow: 3px 3px 0 #f4f5f2;
-      --shadow-sm: 2px 2px 0 #f4f5f2;
+      --shadow: none;
+      --shadow-sm: none;
     }
 
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme]) {
-        --canvas: #181a19;
-        --paper: #232624;
-        --ink: #f4f5f2;
-        --ink-soft: #b7bdb9;
-        --line: #f4f5f2;
-        --line-soft: #555b58;
-        --wash: #303431;
-        --blue: #7698ff;
-        --blue-soft: #29375f;
-        --yellow: #f8df54;
-        --yellow-soft: #554c22;
-        --coral: #ff8075;
-        --coral-soft: #57302d;
-        --green: #75df98;
-        --green-soft: #244a31;
+        --canvas: #202b38;
+        --paper: #18232d;
+        --ink: #f2f5f7;
+        --ink-soft: #9eabb6;
+        --line: #f2f5f7;
+        --line-soft: #40566a;
+        --wash: #243342;
+        --blue: #52b5f5;
+        --blue-soft: #163e59;
+        --yellow: #293744;
+        --yellow-soft: #24313d;
+        --coral: #ff7d87;
+        --coral-soft: #4e2d35;
+        --green: #63d3a2;
+        --green-soft: #183e33;
         --primary-foreground: #111;
-        --shadow: 3px 3px 0 #f4f5f2;
-        --shadow-sm: 2px 2px 0 #f4f5f2;
+        --shadow: none;
+        --shadow-sm: none;
       }
     }
 
@@ -113,9 +113,7 @@
     }
     body::before {
       content: "";
-      display: block;
-      height: 5px;
-      background: linear-gradient(90deg, var(--blue) 0 48%, var(--yellow) 48% 76%, var(--coral) 76%);
+      display: none;
     }
     button, input, select, textarea { font: inherit; }
     button { color: inherit; }
@@ -424,65 +422,6 @@
       .card { padding: .9rem; }
     }
     /* Nexo application shell */
-    :root {
-      --canvas: #ffffff;
-      --paper: #ffffff;
-      --ink: #363636;
-      --ink-soft: #666666;
-      --line: #363636;
-      --line-soft: #dbdbdb;
-      --wash: #f7f7f7;
-      --blue: #0076d1;
-      --blue-soft: #edf6fc;
-      --yellow: #f0f0f0;
-      --yellow-soft: #f7f7f7;
-      --coral: #c84b55;
-      --coral-soft: #f9e5e7;
-      --green: #187653;
-      --green-soft: #def2e9;
-      --shadow: none;
-      --shadow-sm: none;
-      --radius: 2px;
-      --display-font: Avenir, "Avenir Next", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --body-font: var(--display-font);
-    }
-    [data-theme="dark"] {
-      --canvas: #202b38;
-      --paper: #18232d;
-      --ink: #f2f5f7;
-      --ink-soft: #9eabb6;
-      --line: #f2f5f7;
-      --line-soft: #40566a;
-      --wash: #243342;
-      --blue: #52b5f5;
-      --blue-soft: #163e59;
-      --yellow: #293744;
-      --yellow-soft: #24313d;
-      --coral: #ff7d87;
-      --coral-soft: #4e2d35;
-      --green: #63d3a2;
-      --green-soft: #183e33;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme]) {
-        --canvas: #202b38;
-        --paper: #18232d;
-        --ink: #f2f5f7;
-        --ink-soft: #9eabb6;
-        --line: #f2f5f7;
-        --line-soft: #40566a;
-        --wash: #243342;
-        --blue: #52b5f5;
-        --blue-soft: #163e59;
-        --yellow: #293744;
-        --yellow-soft: #24313d;
-        --coral: #ff7d87;
-        --coral-soft: #4e2d35;
-        --green: #63d3a2;
-        --green-soft: #183e33;
-      }
-    }
-    body::before { display: none; }
     h1, h2, h3, h4, h5, h6 { font-family: var(--display-font); }
     h1 { font-size: 1.45rem; }
     h2 { font-size: 1.1rem; }

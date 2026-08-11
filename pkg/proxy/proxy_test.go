@@ -5,14 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-func TestPortalConfigYAMLRoundTrip(t *testing.T) {
+func TestPortalConfigYAML(t *testing.T) {
 	t.Parallel()
 	raw := []byte("upstream: http://127.0.0.1:8080\nportal:\n  name: Studio\n  description: Publishing\n  icon: auto\n  kind: website\n  group: workspace\n  order: 10\n")
 	var cfg Config
@@ -26,12 +25,16 @@ func TestPortalConfigYAMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(encoded) == "" || !strings.Contains(string(encoded), "portal:") {
-		t.Fatalf("portal config not encoded: %s", encoded)
+	var roundTrip Config
+	if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Portal == nil || roundTrip.Portal.Name != cfg.Portal.Name || roundTrip.Portal.Order != cfg.Portal.Order {
+		t.Fatalf("portal config changed after round trip: %+v", roundTrip.Portal)
 	}
 }
 
-func TestCheckTargetOnlyAllowsSafeHTTPURLs(t *testing.T) {
+func TestCheckTarget(t *testing.T) {
 	t.Parallel()
 	valid, _ := url.Parse("https://upstream.example/path")
 	if err := CheckTarget(valid); err != nil {
@@ -45,7 +48,7 @@ func TestCheckTargetOnlyAllowsSafeHTTPURLs(t *testing.T) {
 	}
 }
 
-func TestCacheHeadersDoNotExposePrivateResponses(t *testing.T) {
+func TestCacheHeaders(t *testing.T) {
 	t.Parallel()
 	request := &http.Request{URL: &url.URL{Path: "/account.js"}, Header: make(http.Header)}
 	response := &http.Response{Request: request, Header: make(http.Header)}
@@ -87,7 +90,7 @@ func TestParseDurationSetting(t *testing.T) {
 	}
 }
 
-func TestNewAppliesResponseHeaderTimeout(t *testing.T) {
+func TestResponseHeaderTimeout(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -149,7 +152,7 @@ func TestShouldRetryUpstream(t *testing.T) {
 	}
 }
 
-func TestConfigChangedIncludesTimeoutSettings(t *testing.T) {
+func TestConfigChanged(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Upstream: "http://127.0.0.1:1"}
 	h := New(cfg, "example.test")

@@ -109,17 +109,18 @@ func (d *routeDiscoverer) discover(ctx context.Context, domain string, cfg *prox
 }
 
 func (h *Handler) discoverRoutes(parent context.Context) map[string]routeDiscoveryResult {
-	if h == nil || h.cfg == nil || h.routeDiscovery == nil {
+	if h == nil || h.routeDiscovery == nil {
 		return nil
 	}
+	cfgSnapshot := h.config()
 	ctx, cancel := context.WithTimeout(parent, routeDiscoveryTimeout)
 	defer cancel()
 
-	results := make(map[string]routeDiscoveryResult, len(h.cfg.Proxies))
+	results := make(map[string]routeDiscoveryResult, len(cfgSnapshot.Proxies))
 	var mu sync.Mutex
 	var wait sync.WaitGroup
 	semaphore := make(chan struct{}, 8)
-	for domain, cfg := range h.cfg.Proxies {
+	for domain, cfg := range cfgSnapshot.Proxies {
 		if cfg == nil || cfg.Upstream == "" || (cfg.Portal != nil && cfg.Portal.Hidden) {
 			continue
 		}
@@ -147,12 +148,12 @@ func (h *Handler) handleRouteIcon(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h == nil || h.cfg == nil {
+	if h == nil {
 		http.NotFound(w, r)
 		return
 	}
 	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
-	cfg, ok := h.cfg.Proxies[domain]
+	cfg, ok := h.config().Proxies[domain]
 	if !ok || cfg == nil || cfg.Upstream == "" || (cfg.Portal != nil && cfg.Portal.Hidden) {
 		http.NotFound(w, r)
 		return

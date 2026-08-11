@@ -39,7 +39,8 @@ func StartPreview(addr string) error {
 
 func newPreviewHandler() http.Handler {
 	cfg, proxies, certs, trafficData := previewFixtures()
-	security := (&Handler{cfg: cfg}).securityMiddleware
+	previewWebUI := &Handler{configs: newConfigStore(cfg, "", nil)}
+	security := previewWebUI.securityMiddleware
 	mux := http.NewServeMux()
 
 	render := func(w http.ResponseWriter, name string, data any, status int) {
@@ -61,9 +62,9 @@ func newPreviewHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(trafficData)
 	}))
-	mux.HandleFunc("/favicon.ico", security((&Handler{cfg: cfg}).handleFavicon))
-	mux.HandleFunc("/favicon.svg", security((&Handler{cfg: cfg}).handleFavicon))
-	mux.HandleFunc("/api/route-icon", security((&Handler{cfg: cfg}).handleRouteIcon))
+	mux.HandleFunc("/favicon.ico", security(previewWebUI.handleFavicon))
+	mux.HandleFunc("/favicon.svg", security(previewWebUI.handleFavicon))
+	mux.HandleFunc("/api/route-icon", security(previewWebUI.handleRouteIcon))
 	mux.HandleFunc("/", security(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			target := "/"

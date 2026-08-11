@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestGetRecentDataLimitsAndCopies(t *testing.T) {
+func TestGetRecentData(t *testing.T) {
 	t.Parallel()
 	m := &Manager{data: &TrafficData{Records: []RequestRecord{
 		{Timestamp: time.Unix(1, 0), Domain: "one.example"},

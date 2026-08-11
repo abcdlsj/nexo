@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/abcdlsj/nexo/internal/webui"
@@ -242,7 +243,7 @@ type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	cfg        *config.Config
+	cfg        atomic.Pointer[config.Config]
 	certm      *cert.Manager
 	authm      *auth.Manager
 	proxies    map[string]*proxy.Handler
@@ -251,7 +252,9 @@ type Server struct {
 	failCerts   map[string]time.Time
 	failCertsMu sync.RWMutex
 
-	mu sync.RWMutex
+	mu           sync.RWMutex
+	reloadMu     sync.Mutex
+	webuiHandler *webui.Handler
 
 	watcher *fsnotify.Watcher
 	cfgPath string
@@ -325,7 +328,6 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	s := &Server{
 		ctx:        ctx,
 		cancel:     cancel,
-		cfg:        cfg,
 		certm:      m,
 		authm:      authm,
 		proxies:    make(map[string]*proxy.Handler),
@@ -333,11 +335,16 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		failCerts:  make(map[string]time.Time),
 		cfgPath:    cfgPath,
 	}
+	s.cfg.Store(cfg)
 
 	go s.renewCerts()
 	go s.retryCerts()
 
 	return s, nil
+}
+
+func (s *Server) config() *config.Config {
+	return s.cfg.Load()
 }
 
 // Start starts the HTTPS server and WebUI
@@ -358,7 +365,7 @@ func (s *Server) Start() error {
 		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
 		ReadTimeout:       readTimeout,
-		WriteTimeout:      proxy.ParseDuration(s.cfg.WriteTimeout, 0),
+		WriteTimeout:      proxy.ParseDuration(s.config().WriteTimeout, 0),
 		IdleTimeout:       idleTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
 		MaxHeaderBytes:    maxHeaderSize,
@@ -375,21 +382,25 @@ func (s *Server) Start() error {
 
 // startWebUI starts the WebUI server
 func (s *Server) startWebUI() {
-	webuiHandler := webui.New(s.cfg, s.cfgPath, s.certm, s.authm, s.proxies, func() error {
+	cfg := s.config()
+	webuiHandler := webui.New(cfg, s.cfgPath, s.certm, s.authm, func() error {
 		return s.Reload()
 	}, s.trafficMgr)
+	s.mu.Lock()
+	s.webuiHandler = webuiHandler
+	s.mu.Unlock()
 	mux := http.NewServeMux()
 	webuiHandler.RegisterRoutes(mux)
 
-	webuiHost := strings.TrimSpace(s.cfg.WebUI.Host)
+	webuiHost := strings.TrimSpace(cfg.WebUI.Host)
 	if webuiHost == "" {
 		webuiHost = "127.0.0.1"
 	}
-	if s.cfg.WebUI.Password == "" && !isLoopbackHost(webuiHost) {
+	if cfg.WebUI.Password == "" && !isLoopbackHost(webuiHost) {
 		log.Warn("Refusing to expose passwordless WebUI; binding to loopback", "configured_host", webuiHost)
 		webuiHost = "127.0.0.1"
 	}
-	webuiPort := s.cfg.WebUI.Port
+	webuiPort := cfg.WebUI.Port
 	if webuiPort == "" {
 		webuiPort = "8080"
 	}
@@ -422,6 +433,7 @@ func isLoopbackHost(host string) bool {
 
 func (s *Server) createTLSConfig() *tls.Config {
 	getCert := func(domain string, clientIP string) (*tls.Certificate, error) {
+		cfg := s.config()
 		// Reject empty domain
 		if domain == "" {
 			if clientIP != "" {
@@ -431,8 +443,8 @@ func (s *Server) createTLSConfig() *tls.Config {
 		}
 
 		// Check if domain is configured
-		if _, configured := s.cfg.Proxies[domain]; !configured {
-			if _, wildcard := s.cfg.GetWildcardDomain(domain); !wildcard {
+		if _, configured := cfg.Proxies[domain]; !configured {
+			if _, wildcard := cfg.GetWildcardDomain(domain); !wildcard {
 				log.Warn("TLS request for unconfigured domain", "ip", clientIP, "domain", domain)
 				return nil, fmt.Errorf("domain not configured: %s", domain)
 			}
@@ -445,7 +457,7 @@ func (s *Server) createTLSConfig() *tls.Config {
 		}
 
 		// Try wildcard domain if available
-		if wild, ok := s.cfg.GetWildcardDomain(domain); ok {
+		if wild, ok := cfg.GetWildcardDomain(domain); ok {
 			cert, err := s.certm.GetCertificate(&tls.ClientHelloInfo{ServerName: wild})
 			if err == nil {
 				return cert, nil
@@ -453,7 +465,7 @@ func (s *Server) createTLSConfig() *tls.Config {
 		}
 
 		// In dev mode, generate self-signed certificate
-		if s.cfg.Cloudflare.APIToken == "" {
+		if cfg.Cloudflare.APIToken == "" {
 			log.Warn("Using self-signed certificate for domain", "domain", domain)
 			return s.generateSelfSignedCert(domain)
 		}
@@ -479,9 +491,10 @@ func (s *Server) createTLSConfig() *tls.Config {
 
 // generateSelfSignedCert generates a self-signed certificate for development
 func (s *Server) generateSelfSignedCert(domain string) (*tls.Certificate, error) {
+	cfg := s.config()
 	// Check if we already have a cached self-signed cert for this domain
-	certPath := filepath.Join(s.cfg.CertDir, domain+"-dev.crt")
-	keyPath := filepath.Join(s.cfg.CertDir, domain+"-dev.key")
+	certPath := filepath.Join(cfg.CertDir, domain+"-dev.crt")
+	keyPath := filepath.Join(cfg.CertDir, domain+"-dev.key")
 
 	// Try to load existing cert
 	if _, err := os.Stat(certPath); err == nil {
@@ -592,7 +605,7 @@ func (s *Server) handleHTTPS() http.Handler {
 			http.Error(w, "Invalid host", http.StatusBadRequest)
 			return
 		}
-		if s.cfg.IsIPBlocked(s.getClientIP(r)) {
+		if s.config().IsIPBlocked(s.getClientIP(r)) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -683,20 +696,21 @@ func (s *Server) extractHost(r *http.Request) string {
 }
 
 func (s *Server) findHandlerWithConfig(host string) (*proxy.Handler, *proxy.Config) {
+	cfg := s.config()
 	s.mu.RLock()
 	h, ok := s.proxies[host]
 	s.mu.RUnlock()
 
 	if ok {
-		return h, s.cfg.Proxies[host]
+		return h, cfg.Proxies[host]
 	}
 
-	if wild, ok := s.cfg.GetWildcardDomain(host); ok {
+	if wild, ok := cfg.GetWildcardDomain(host); ok {
 		s.mu.RLock()
 		h, ok = s.proxies[wild]
 		s.mu.RUnlock()
 		if ok {
-			return h, s.cfg.Proxies[wild]
+			return h, cfg.Proxies[wild]
 		}
 	}
 
@@ -711,9 +725,10 @@ func (s *Server) loadProxies(reload bool) error {
 }
 
 func (s *Server) loadAllProxies() error {
+	cfgSnapshot := s.config()
 	new := make(map[string]*proxy.Handler)
 
-	for d, cfg := range s.cfg.Proxies {
+	for d, cfg := range cfgSnapshot.Proxies {
 		if err := s.setupProxy(d, cfg, new); err != nil {
 			continue
 		}
@@ -727,6 +742,7 @@ func (s *Server) loadAllProxies() error {
 }
 
 func (s *Server) loadProxiesIncremental() error {
+	cfgSnapshot := s.config()
 	s.mu.RLock()
 	currentDomains := make(map[string]bool)
 	for d := range s.proxies {
@@ -735,13 +751,13 @@ func (s *Server) loadProxiesIncremental() error {
 	s.mu.RUnlock()
 
 	newDomains := make(map[string]bool)
-	for d := range s.cfg.Proxies {
+	for d := range cfgSnapshot.Proxies {
 		newDomains[d] = true
 	}
 
 	var added, updated, removed int
 
-	for d, cfg := range s.cfg.Proxies {
+	for d, cfg := range cfgSnapshot.Proxies {
 		if !currentDomains[d] {
 			handler, err := s.createProxyHandler(d, cfg)
 			if err != nil {
@@ -845,7 +861,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 // handleCertObtain handles certificate obtaining with proper error handling and logging
 func (s *Server) handleCertObtain(domain string, isRetry bool) error {
 	d := domain
-	if wild, ok := s.cfg.GetWildcardDomain(domain); ok {
+	if wild, ok := s.config().GetWildcardDomain(domain); ok {
 		d = wild
 	}
 
@@ -1004,16 +1020,20 @@ func (s *Server) setupConfigWatcher() error {
 
 // Reload reloads the configuration and updates the proxies
 func (s *Server) Reload() error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
 	// Reload configuration file
 	newCfg, err := config.Load(s.cfgPath)
 	if err != nil {
 		return fmt.Errorf("failed to reload config: %v", err)
 	}
 
-	// Keep the config pointer stable because the WebUI shares it. Replacing the
-	// pointer made the UI continue rendering and overwriting stale settings.
-	*s.cfg = *newCfg
+	previous := s.config()
+	s.cfg.Store(newCfg)
 	if err := s.loadProxies(true); err != nil {
+		s.cfg.Store(previous)
+		_ = s.loadProxies(true)
 		return fmt.Errorf("failed to load proxies: %v", err)
 	}
 
@@ -1029,6 +1049,12 @@ func (s *Server) Reload() error {
 		if newCfg.Auth.SecretKey != "" {
 			s.authm.UpdateSecretKey(newCfg.Auth.SecretKey)
 		}
+	}
+	s.mu.RLock()
+	webuiHandler := s.webuiHandler
+	s.mu.RUnlock()
+	if webuiHandler != nil {
+		webuiHandler.SetConfig(newCfg)
 	}
 
 	return nil
