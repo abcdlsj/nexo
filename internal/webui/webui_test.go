@@ -2,9 +2,11 @@ package webui
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/abcdlsj/nexo/pkg/config"
@@ -140,7 +142,7 @@ func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
 	if routes[0].IconURL != "/assets/studio.svg" || routes[0].Name != "Studio" {
 		t.Errorf("custom portal metadata not applied: %+v", routes[0])
 	}
-	if routes[1].IconURL != "https://api.example.com/favicon.ico" || routes[1].Policy != "OAUTH" {
+	if routes[1].IconURL != "/api/route-icon?domain=api.example.com" || routes[1].Policy != "OAUTH" {
 		t.Errorf("unsafe icon was not replaced or policy is wrong: %+v", routes[1])
 	}
 	if routes[2].Name != "Docs" || routes[2].Initial != "D" {
@@ -148,16 +150,120 @@ func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
 	}
 }
 
+func TestBuildRouteViewsHidesImplicitRedirects(t *testing.T) {
+	t.Parallel()
+	proxies := map[string]*proxy.Config{
+		"root.example.com":    {Redirect: "https://github.com/example"},
+		"legacy.example.com":  {Redirect: "https://app.example.com", Portal: &proxy.PortalConfig{Name: "Legacy"}},
+		"service.example.com": {Upstream: "http://service:8080"},
+		"example.com":         {Upstream: "http://website:8080"},
+		"published.com":       {Upstream: "http://website:8080", Portal: &proxy.PortalConfig{Name: "Published"}},
+	}
+
+	routes := buildRouteViews(proxies)
+	if len(routes) != 3 {
+		t.Fatalf("buildRouteViews() returned %d routes, want 3", len(routes))
+	}
+	for _, route := range routes {
+		if route.Domain == "root.example.com" || route.Domain == "example.com" {
+			t.Fatalf("implicit redirect or apex domain was published: %s", route.Domain)
+		}
+	}
+}
+
+func TestApexDomainDetection(t *testing.T) {
+	t.Parallel()
+	if !isApexDomain("songjian.li") {
+		t.Fatal("songjian.li should be recognized as an apex domain")
+	}
+	if isApexDomain("api.songjian.li") || isApexDomain("service.local") {
+		t.Fatal("subdomains and non-public local names must not be treated as public apex domains")
+	}
+}
+
+func TestRouteDiscovererFindsHTMLIconAndCaches(t *testing.T) {
+	t.Parallel()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!doctype html><html><head><link rel="icon" href="/static/icon.svg"></head></html>`))
+		case "/static/icon.svg":
+			w.Header().Set("Content-Type", "image/svg+xml")
+			_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	discoverer := newRouteDiscoverer()
+	cfg := &proxy.Config{Upstream: server.URL}
+	result := discoverer.discover(context.Background(), "app.example.com", cfg)
+	if result.Kind != "WEBSITE" || result.IconContentType != "image/svg+xml" || len(result.Icon) == 0 {
+		t.Fatalf("unexpected discovery result: %+v", result)
+	}
+	before := requests.Load()
+	result = discoverer.discover(context.Background(), "app.example.com", cfg)
+	if result.Kind != "WEBSITE" || requests.Load() != before {
+		t.Fatalf("cached discovery made another upstream request: before=%d after=%d", before, requests.Load())
+	}
+}
+
+func TestRouteDiscovererClassifiesJSONAsAPI(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"service":"payments"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	result := newRouteDiscoverer().discover(context.Background(), "api.example.com", &proxy.Config{Upstream: server.URL})
+	if result.Kind != "API" {
+		t.Fatalf("JSON upstream classified as %q, want API", result.Kind)
+	}
+}
+
+func TestRouteDiscovererMarksServerFailureUnavailable(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "maintenance", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	result := newRouteDiscoverer().discover(context.Background(), "down.example.com", &proxy.Config{Upstream: server.URL})
+	if !result.Unavailable {
+		t.Fatal("503 upstream was not marked unavailable")
+	}
+}
+
+func TestRouteIconRejectsUnknownDomains(t *testing.T) {
+	t.Parallel()
+	handler := &Handler{cfg: &config.Config{Proxies: map[string]*proxy.Config{}}}
+	request := httptest.NewRequest(http.MethodGet, "/api/route-icon?domain=unknown.example.com", nil)
+	response := httptest.NewRecorder()
+	handler.handleRouteIcon(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("unknown icon domain returned %d", response.Code)
+	}
+}
+
 func TestDashboardRendersSharedRouteProtocol(t *testing.T) {
 	t.Parallel()
 	page := PageData{Config: &config.Config{}, CurrentIP: "127.0.0.1"}
-	data := DashboardData{PageData: page, Routes: []RouteView{{Domain: "api.example.com", Name: "Developer API", Description: "Internal API", IconURL: "https://api.example.com/favicon.ico", Initial: "D", Kind: "PROXY", Policy: "OAUTH", Href: "https://api.example.com", Auth: true}}, ProtectedRoutes: 1}
+	data := DashboardData{PageData: page, Routes: []RouteView{{Domain: "api.example.com", Name: "Developer API", Description: "Internal API", IconURL: "https://api.example.com/favicon.ico", Initial: "D", Kind: "API", Policy: "OAUTH", Href: "https://api.example.com", Auth: true, Unavailable: true}}, ProtectedRoutes: 1}
 	var output bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&output, "dashboard.html", data); err != nil {
 		t.Fatal(err)
 	}
 	html := output.String()
-	for _, value := range []string{"ROUTING BOARD", "ROUTE DIRECTORY", "Developer API", "data-route-index=\"0\"", "class=\"app-page\""} {
+	for _, value := range []string{"ROUTING BOARD", "ROUTE DIRECTORY", "Developer API", "data-route-index=\"0\"", "class=\"app-page\"", "Upstream unavailable"} {
 		if !strings.Contains(html, value) {
 			t.Errorf("dashboard output missing %q", value)
 		}

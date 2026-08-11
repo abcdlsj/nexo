@@ -58,6 +58,7 @@ type PortalConfig struct {
 	Name        string `mapstructure:"name" yaml:"name,omitempty"`
 	Description string `mapstructure:"description" yaml:"description,omitempty"`
 	Icon        string `mapstructure:"icon" yaml:"icon,omitempty"`
+	Kind        string `mapstructure:"kind" yaml:"kind,omitempty"`
 	Group       string `mapstructure:"group" yaml:"group,omitempty"`
 	Order       int    `mapstructure:"order" yaml:"order,omitempty"`
 	Hidden      bool   `mapstructure:"hidden" yaml:"hidden,omitempty"`

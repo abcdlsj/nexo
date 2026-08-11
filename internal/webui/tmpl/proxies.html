@@ -57,6 +57,17 @@
               <input type="text" id="portal_icon" name="portal_icon" placeholder="auto, /path, or https://…" autocomplete="off">
             </div>
             <div class="form-group">
+              <label for="portal_kind">Service kind</label>
+              <select id="portal_kind" name="portal_kind">
+                <option value="">Auto detect</option>
+                <option value="website">Website</option>
+                <option value="api">API</option>
+                <option value="service">Service</option>
+              </select>
+            </div>
+          </div>
+          <div class="portal-grid">
+            <div class="form-group">
               <label for="portal_order">Order</label>
               <input type="number" id="portal_order" name="portal_order" placeholder="0">
             </div>

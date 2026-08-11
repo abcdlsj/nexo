@@ -601,7 +601,8 @@
     .topology-meta { display: block; margin-top: 3px; overflow: hidden; color: var(--ink-soft); font: 8px/1 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .core-node .topology-name { color: var(--canvas); }
     .core-node .topology-meta { color: color-mix(in srgb, var(--canvas) 62%, transparent); line-height: 1.45; white-space: normal; }
-    .topology-state { color: var(--ink-soft); font: 7px/1 var(--mono-font); }
+    .topology-state { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font: 7px/1 var(--mono-font); }
+    .route-health-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--coral); box-shadow: 0 0 0 2px var(--coral-soft); }
     .topology-service[hidden] { display: none; }
     .node-dim { opacity: .16; }
 
@@ -617,6 +618,7 @@
     .gateway-name { display: block; overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
     .gateway-description { display: block; margin-top: 3px; overflow: hidden; color: var(--ink-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
     .route-kind, .route-policy { justify-self: start; padding: 4px 6px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 7px/1 var(--mono-font); }
+    .route-kind { display: inline-flex; align-items: center; gap: 6px; }
     .route-policy.protected { color: var(--green); }
     .gateway-domain { min-width: 0; overflow: hidden; color: var(--blue); font: 9px/1 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .gateway-open { align-self: stretch; display: grid; place-items: center; border-left: 1px solid var(--line-soft); color: var(--ink-soft); }

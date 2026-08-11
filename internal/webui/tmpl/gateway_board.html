@@ -36,7 +36,7 @@
         <a class="topology-node topology-service" href="{{$route.Href}}" target="_blank" rel="noopener noreferrer" data-route-index="{{$index}}" data-policy="{{if $route.Auth}}protected{{else}}public{{end}}" data-search="{{$route.Name}} {{$route.Description}} {{$route.Domain}} {{$route.Group}} {{$route.Kind}} {{$route.Policy}}">
           <span class="topology-icon">{{template "route_icon" $route}}</span>
           <span><span class="topology-name">{{$route.Name}}</span><span class="topology-meta">{{$route.Domain}}</span></span>
-          <span class="topology-state">{{$route.Kind}}</span>
+          <span class="topology-state">{{$route.Kind}}{{if $route.Unavailable}}<i class="route-health-dot" title="Upstream unavailable" aria-label="Upstream unavailable"></i>{{end}}</span>
         </a>
         {{end}}
       </div>

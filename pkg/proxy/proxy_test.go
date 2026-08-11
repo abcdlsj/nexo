@@ -14,12 +14,12 @@ import (
 
 func TestPortalConfigYAMLRoundTrip(t *testing.T) {
 	t.Parallel()
-	raw := []byte("upstream: http://127.0.0.1:8080\nportal:\n  name: Studio\n  description: Publishing\n  icon: auto\n  group: workspace\n  order: 10\n")
+	raw := []byte("upstream: http://127.0.0.1:8080\nportal:\n  name: Studio\n  description: Publishing\n  icon: auto\n  kind: website\n  group: workspace\n  order: 10\n")
 	var cfg Config
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Portal == nil || cfg.Portal.Name != "Studio" || cfg.Portal.Order != 10 {
+	if cfg.Portal == nil || cfg.Portal.Name != "Studio" || cfg.Portal.Kind != "website" || cfg.Portal.Order != 10 {
 		t.Fatalf("portal config not decoded: %+v", cfg.Portal)
 	}
 	encoded, err := yaml.Marshal(&cfg)

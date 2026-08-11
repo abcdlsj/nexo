@@ -43,7 +43,8 @@ proxies:
     portal:
       name: Blog
       description: Writing and publishing
-      icon: auto                    # Uses https://blog.example.com/favicon.ico
+      icon: auto                    # Discovers the icon from the configured upstream
+      kind: website                 # Optional: website, api, or service
       group: workspace
       order: 10
       hidden: false
@@ -63,6 +64,7 @@ proxies:
   # Redirect example
   old.example.com:
     redirect: https://www.example.com
+    # Redirects are omitted from the gateway directory unless portal is set.
 
   # Standalone domain (not in wildcards, will obtain individual certificate)
   specific.otherdomain.com:

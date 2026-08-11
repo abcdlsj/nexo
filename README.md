@@ -166,9 +166,11 @@ proxies:
 
 ### Gateway directory metadata (optional)
 
-Every configured route appears in the gateway directory without additional configuration. Nexo derives the display name from the domain, loads `https://<domain>/favicon.ico`, and describes the configured proxy or redirect target.
+Nexo publishes proxy routes in the gateway directory without additional configuration. It probes the configured upstream, classifies HTML applications and JSON/OpenAPI services, and discovers standard HTML icon links. Discovery results are cached. A failed probe uses the built-in service icon and does not remove the route. Connection failures, timeouts, and 5xx responses add a small red availability marker.
 
-Use `portal` only when a route needs custom presentation or ordering:
+Redirects and registrable apex domains are not published by default. Add a `portal` block to publish one explicitly.
+
+Use `portal` when a route needs custom presentation, ordering, visibility, or an explicit service kind:
 
 ```yaml
 proxies:
@@ -178,12 +180,13 @@ proxies:
       name: Studio
       description: Content, assets and publishing
       icon: auto
+      kind: website
       group: workspace
       order: 10
       hidden: false
 ```
 
-`icon` accepts `auto`, a root-relative path, or an HTTP(S) URL. Failed icon requests fall back to the first letter of the display name. Set `hidden: true` to keep a route active without listing it on the gateway dashboard.
+`icon` accepts `auto`, a root-relative path, or an HTTP(S) URL. `kind` accepts `website`, `api`, or `service`; omit it to use automatic detection. Set `hidden: true` to keep a route active without listing it on the gateway dashboard.
 
 ### GitHub OAuth protection
 

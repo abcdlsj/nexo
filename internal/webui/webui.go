@@ -60,16 +60,17 @@ type loginAttempt struct {
 }
 
 type Handler struct {
-	cfg           *config.Config
-	cfgPath       string
-	certMgr       *cert.Manager
-	authMgr       *auth.Manager
-	proxies       map[string]*proxy.Handler
-	onChange      func() error
-	rateLimiter   *RateLimiter
-	loginAttempts map[string]*loginAttempt
-	loginMu       sync.RWMutex
-	trafficMgr    *traffic.Manager
+	cfg            *config.Config
+	cfgPath        string
+	certMgr        *cert.Manager
+	authMgr        *auth.Manager
+	proxies        map[string]*proxy.Handler
+	onChange       func() error
+	rateLimiter    *RateLimiter
+	loginAttempts  map[string]*loginAttempt
+	loginMu        sync.RWMutex
+	trafficMgr     *traffic.Manager
+	routeDiscovery *routeDiscoverer
 }
 
 func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, proxies map[string]*proxy.Handler, onChange func() error, trafficMgr *traffic.Manager) *Handler {
@@ -86,15 +87,16 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 	}
 
 	handler := &Handler{
-		cfg:           cfg,
-		cfgPath:       cfgPath,
-		certMgr:       certMgr,
-		authMgr:       authMgr,
-		proxies:       proxies,
-		onChange:      onChange,
-		rateLimiter:   NewRateLimiter(rlConfig),
-		loginAttempts: make(map[string]*loginAttempt),
-		trafficMgr:    trafficMgr,
+		cfg:            cfg,
+		cfgPath:        cfgPath,
+		certMgr:        certMgr,
+		authMgr:        authMgr,
+		proxies:        proxies,
+		onChange:       onChange,
+		rateLimiter:    NewRateLimiter(rlConfig),
+		loginAttempts:  make(map[string]*loginAttempt),
+		trafficMgr:     trafficMgr,
+		routeDiscovery: newRouteDiscoverer(),
 	}
 
 	// Start cleanup goroutine for login attempts
@@ -130,6 +132,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Traffic routes
 	mux.HandleFunc("/traffic", protected(h.handleTraffic))
 	mux.HandleFunc("/api/traffic", protected(h.handleTrafficAPI))
+	mux.HandleFunc("/api/route-icon", protected(h.handleRouteIcon))
 }
 
 func (h *Handler) securityMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -462,21 +465,31 @@ type RouteView struct {
 	Href        string
 	Order       int
 	Auth        bool
+	Unavailable bool
 }
 
 func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
+	return buildRouteViewsWithDiscovery(proxies, nil)
+}
+
+func buildRouteViewsWithDiscovery(proxies map[string]*proxy.Config, discoveries map[string]routeDiscoveryResult) []RouteView {
 	routes := make([]RouteView, 0, len(proxies))
 	for domain, cfg := range proxies {
-		if cfg == nil || (cfg.Portal != nil && cfg.Portal.Hidden) {
+		if cfg == nil || (cfg.Portal != nil && cfg.Portal.Hidden) || (cfg.Portal == nil && (cfg.Redirect != "" || isApexDomain(domain))) {
 			continue
 		}
 
 		name := defaultRouteName(domain)
-		description := "Proxy to " + cfg.Upstream
-		kind := "PROXY"
+		description := ""
+		kind := "SERVICE"
 		target := cfg.Upstream
 		group := "default"
 		order := 0
+		if discovery, ok := discoveries[domain]; ok {
+			if value := normalizeRouteKind(discovery.Kind); value != "" {
+				kind = value
+			}
+		}
 		if cfg.Redirect != "" {
 			description = "Redirect to " + cfg.Redirect
 			kind = "REDIRECT"
@@ -492,13 +505,29 @@ func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
 			if value := strings.TrimSpace(cfg.Portal.Group); value != "" {
 				group = value
 			}
+			if cfg.Redirect == "" {
+				if value := normalizeRouteKind(cfg.Portal.Kind); value != "" {
+					kind = value
+				}
+			}
 			order = cfg.Portal.Order
+		}
+		if description == "" {
+			switch kind {
+			case "API":
+				description = "API endpoint"
+			case "WEBSITE":
+				description = "Web application"
+			default:
+				description = "Proxied service"
+			}
 		}
 
 		policy := "PUBLIC"
 		if cfg.Auth {
 			policy = "OAUTH"
 		}
+		discovery := discoveries[domain]
 		routes = append(routes, RouteView{
 			Domain:      domain,
 			Name:        name,
@@ -512,6 +541,7 @@ func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
 			Href:        "https://" + domain,
 			Order:       order,
 			Auth:        cfg.Auth,
+			Unavailable: discovery.Unavailable,
 		})
 	}
 
@@ -561,7 +591,7 @@ func routeInitial(name string) string {
 }
 
 func portalIconURL(domain string, portal *proxy.PortalConfig) string {
-	fallback := "https://" + domain + "/favicon.ico"
+	fallback := "/api/route-icon?domain=" + url.QueryEscape(domain)
 	if portal == nil {
 		return fallback
 	}
@@ -602,16 +632,14 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	discoveries := h.discoverRoutes(r.Context())
 	data := DashboardData{
 		PageData: h.newPageData(r, "dashboard"),
-		Routes:   buildRouteViews(h.cfg.Proxies),
+		Routes:   buildRouteViewsWithDiscovery(h.cfg.Proxies, discoveries),
 	}
 
-	for _, p := range h.cfg.Proxies {
-		if p == nil {
-			continue
-		}
-		if p.Auth && (p.Portal == nil || !p.Portal.Hidden) {
+	for _, route := range data.Routes {
+		if route.Auth {
 			data.ProtectedRoutes++
 		}
 	}
@@ -682,11 +710,16 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 	portalName := strings.TrimSpace(r.FormValue("portal_name"))
 	portalDescription := strings.TrimSpace(r.FormValue("portal_description"))
 	portalIcon := strings.TrimSpace(r.FormValue("portal_icon"))
+	portalKind := strings.TrimSpace(r.FormValue("portal_kind"))
 	portalGroup := strings.TrimSpace(r.FormValue("portal_group"))
 	portalOrderRaw := strings.TrimSpace(r.FormValue("portal_order"))
 	portalHidden := r.FormValue("portal_hidden") == "on"
 	if !validPortalIcon(portalIcon) {
 		http.Redirect(w, r, "/proxies?error=invalid_portal_icon", http.StatusSeeOther)
+		return
+	}
+	if portalKind != "" && normalizeRouteKind(portalKind) == "" {
+		http.Redirect(w, r, "/proxies?error=invalid_portal_kind", http.StatusSeeOther)
 		return
 	}
 	portalOrder := 0
@@ -698,11 +731,12 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		portalOrder = value
 	}
-	if portalName != "" || portalDescription != "" || portalIcon != "" || portalGroup != "" || portalOrder != 0 || portalHidden {
+	if portalName != "" || portalDescription != "" || portalIcon != "" || portalKind != "" || portalGroup != "" || portalOrder != 0 || portalHidden {
 		cfg.Portal = &proxy.PortalConfig{
 			Name:        portalName,
 			Description: portalDescription,
 			Icon:        portalIcon,
+			Kind:        normalizeRouteKind(portalKind),
 			Group:       portalGroup,
 			Order:       portalOrder,
 			Hidden:      portalHidden,

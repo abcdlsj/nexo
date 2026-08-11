@@ -63,6 +63,7 @@ func newPreviewHandler() http.Handler {
 	}))
 	mux.HandleFunc("/favicon.ico", security((&Handler{cfg: cfg}).handleFavicon))
 	mux.HandleFunc("/favicon.svg", security((&Handler{cfg: cfg}).handleFavicon))
+	mux.HandleFunc("/api/route-icon", security((&Handler{cfg: cfg}).handleRouteIcon))
 	mux.HandleFunc("/", security(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			target := "/"
@@ -109,9 +110,9 @@ func newPreviewHandler() http.Handler {
 
 func previewFixtures() (*config.Config, map[string]*proxy.Config, []CertInfo, *traffic.TrafficData) {
 	proxies := map[string]*proxy.Config{
-		"api.nexo.local":     {Upstream: "http://127.0.0.1:9001", Auth: true, Portal: &proxy.PortalConfig{Name: "Developer API", Description: "Internal API and developer console", Group: "workspace", Order: 20}},
-		"studio.nexo.local":  {Upstream: "http://127.0.0.1:4173", Portal: &proxy.PortalConfig{Name: "Studio", Description: "Content, assets and publishing", Group: "workspace", Order: 10}},
-		"metrics.nexo.local": {Upstream: "http://prometheus:9090", Auth: true, Portal: &proxy.PortalConfig{Name: "Observability", Description: "Metrics, logs and alerts", Group: "system", Order: 30}},
+		"api.nexo.local":     {Upstream: "http://127.0.0.1:9001", Auth: true, Portal: &proxy.PortalConfig{Name: "Developer API", Description: "Internal API and developer console", Kind: "API", Group: "workspace", Order: 20}},
+		"studio.nexo.local":  {Upstream: "http://127.0.0.1:4173", Portal: &proxy.PortalConfig{Name: "Studio", Description: "Content, assets and publishing", Kind: "WEBSITE", Group: "workspace", Order: 10}},
+		"metrics.nexo.local": {Upstream: "http://prometheus:9090", Auth: true, Portal: &proxy.PortalConfig{Name: "Observability", Description: "Metrics, logs and alerts", Kind: "SERVICE", Group: "system", Order: 30}},
 		"old.nexo.local":     {Redirect: "https://studio.nexo.local", Portal: &proxy.PortalConfig{Name: "Legacy Studio", Description: "Redirect to Studio", Group: "system", Order: 40}},
 	}
 	cfg := &config.Config{
