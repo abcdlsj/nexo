@@ -1,5 +1,5 @@
 {{template "head" .}}
-<body>
+<body class="app-page">
   {{template "nav" .}}
 
   <div class="container">
@@ -7,7 +7,7 @@
       <div><div class="eyebrow">Routing table</div><h1>Routes</h1><p class="lede">{{len .Proxies}} configured endpoints</p></div>
     </header>
 
-    <details class="route-composer card">
+    <details class="route-composer card" id="add-route">
       <summary>
         <span><strong>Add route</strong><span class="card-subtitle">Create a proxy or HTTPS redirect</span></span>
       </summary>
@@ -35,6 +35,34 @@
           <label for="redirect">Redirect destination</label>
           <input type="text" id="redirect" name="redirect" placeholder="https://www.example.com" autocomplete="off">
         </div>
+        <fieldset class="portal-options">
+          <legend>Gateway directory</legend>
+          <div class="portal-grid">
+            <div class="form-group">
+              <label for="portal_name">Display name</label>
+              <input type="text" id="portal_name" name="portal_name" placeholder="Defaults to the domain name" maxlength="80">
+            </div>
+            <div class="form-group">
+              <label for="portal_group">Group</label>
+              <input type="text" id="portal_group" name="portal_group" placeholder="default" maxlength="40">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="portal_description">Description</label>
+            <input type="text" id="portal_description" name="portal_description" placeholder="Short factual description" maxlength="160">
+          </div>
+          <div class="portal-grid">
+            <div class="form-group">
+              <label for="portal_icon">Icon URL</label>
+              <input type="text" id="portal_icon" name="portal_icon" placeholder="auto, /path, or https://…" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="portal_order">Order</label>
+              <input type="number" id="portal_order" name="portal_order" placeholder="0">
+            </div>
+          </div>
+          <label class="switch-row"><input type="checkbox" name="portal_hidden"> Hide from gateway directory</label>
+        </fieldset>
         <div class="composer-actions">
           <div>
           <label class="switch-row">

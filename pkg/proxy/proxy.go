@@ -32,9 +32,10 @@ var staticExtensions = map[string]struct{}{
 
 // Config represents the configuration for a proxy
 type Config struct {
-	Upstream string `mapstructure:"upstream" yaml:"upstream,omitempty"`
-	Redirect string `mapstructure:"redirect" yaml:"redirect,omitempty"`
-	Auth     bool   `mapstructure:"auth" yaml:"auth,omitempty"` // Enable OAuth authentication for this proxy
+	Upstream string        `mapstructure:"upstream" yaml:"upstream,omitempty"`
+	Redirect string        `mapstructure:"redirect" yaml:"redirect,omitempty"`
+	Auth     bool          `mapstructure:"auth" yaml:"auth,omitempty"` // Enable OAuth authentication for this proxy
+	Portal   *PortalConfig `mapstructure:"portal" yaml:"portal,omitempty"`
 
 	// WriteTimeout optionally caps the total time allowed to write a response
 	// for this route. Accepts Go duration strings (e.g. "5m"); empty or "0"
@@ -49,6 +50,17 @@ type Config struct {
 	// response byte is sent. For safety it only applies to idempotent methods
 	// (GET/HEAD/OPTIONS) and never when the client already canceled.
 	Retry bool `mapstructure:"retry" yaml:"retry,omitempty"`
+}
+
+// PortalConfig controls how a route appears on the Nexo gateway dashboard.
+// All fields are optional; runtime proxy behavior does not depend on them.
+type PortalConfig struct {
+	Name        string `mapstructure:"name" yaml:"name,omitempty"`
+	Description string `mapstructure:"description" yaml:"description,omitempty"`
+	Icon        string `mapstructure:"icon" yaml:"icon,omitempty"`
+	Group       string `mapstructure:"group" yaml:"group,omitempty"`
+	Order       int    `mapstructure:"order" yaml:"order,omitempty"`
+	Hidden      bool   `mapstructure:"hidden" yaml:"hidden,omitempty"`
 }
 
 // Handler represents a proxy handler

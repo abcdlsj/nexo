@@ -1,0 +1,49 @@
+{{define "gateway_board"}}
+<section class="switchboard-panel" aria-labelledby="routing-board-title">
+  <header class="board-header">
+    <div class="board-title"><small>01</small><h1 id="routing-board-title">ROUTING BOARD</h1></div>
+    <div class="board-readouts" aria-label="Routing status">
+      <span><small>INGRESS</small><b>HTTPS :443</b></span>
+      <span><small>ROUTES</small><b>{{printf "%02d" (len .Routes)}}</b></span>
+      <span><small>PROTECTED</small><b>{{printf "%02d" .ProtectedRoutes}}</b></span>
+    </div>
+  </header>
+
+  <div class="topology-scroll" id="topology-scroll">
+    {{if .Routes}}
+    <div class="topology-canvas" id="topology-canvas">
+      <svg class="topology-wires" id="topology-wires" aria-hidden="true">
+        <path class="topology-wire-base" id="ingress-wire-base"></path>
+        <path class="topology-wire-live" id="ingress-wire-live"></path>
+        {{range $index, $route := .Routes}}
+        <path class="topology-wire-base route-wire-{{$index}}"></path>
+        <path class="topology-wire-live route-wire-{{$index}}"></path>
+        {{end}}
+      </svg>
+
+      <div class="topology-node edge-node" id="edge-node" data-search="internet edge https tcp 443">
+        <span class="topology-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3Z"/></svg></span>
+        <span><span class="topology-name">Internet</span><span class="topology-meta">TCP / 443</span></span>
+      </div>
+
+      <div class="topology-node core-node" id="core-node" data-search="nexo gateway tls oauth routing">
+        <span class="topology-icon">{{template "mark" .}}</span>
+        <span><span class="topology-name">nexo</span><span class="topology-meta">TLS TERMINATION<br>AUTH / ROUTE</span></span>
+      </div>
+
+      <div class="topology-services" id="topology-services">
+        {{range $index, $route := .Routes}}
+        <a class="topology-node topology-service" href="{{$route.Href}}" target="_blank" rel="noopener noreferrer" data-route-index="{{$index}}" data-policy="{{if $route.Auth}}protected{{else}}public{{end}}" data-search="{{$route.Name}} {{$route.Description}} {{$route.Domain}} {{$route.Group}} {{$route.Kind}} {{$route.Policy}}">
+          <span class="topology-icon">{{template "route_icon" $route}}</span>
+          <span><span class="topology-name">{{$route.Name}}</span><span class="topology-meta">{{$route.Domain}}</span></span>
+          <span class="topology-state">{{$route.Kind}}</span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+    {{else}}
+    <div class="gateway-empty">NO ROUTES CONFIGURED</div>
+    {{end}}
+  </div>
+</section>
+{{end}}

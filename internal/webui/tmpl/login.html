@@ -1,5 +1,5 @@
 {{template "head" .}}
-<body>
+<body class="login-page">
   <main class="login-shell">
     <section class="login-poster" aria-label="Nexo">
       <div class="login-brand">
@@ -56,7 +56,7 @@
     .route-sketch i { grid-column: 1 / -1; width: 2px; height: 20px; margin-left: 1rem; background: #111; }
     .login-poster-foot { display: flex; align-items: center; gap: .45rem; font-family: var(--mono-font); font-size: .68rem; font-weight: 800; text-transform: uppercase; }
     .status-dot { width: 9px; height: 9px; border: 1.5px solid #111; background: var(--green); }
-    .login-card { min-height: 470px; padding: 2rem; display: flex; flex-direction: column; justify-content: center; border: 2px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 4px 4px 0 var(--border); }
+    .login-card { min-height: 470px; padding: 2rem; display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--card); }
     .login-header { margin-bottom: 1.5rem; }
     .login-header h1 { font-size: 2.35rem; }
     .login-error { margin-bottom: 1rem; padding: .7rem; border: 2px solid var(--border); border-radius: var(--radius); background: var(--coral-soft); }
@@ -65,9 +65,9 @@
     .login-btn { width: 100%; margin-top: .25rem; }
     @media (max-width: 680px) {
       .login-shell { grid-template-columns: 1fr; align-content: center; padding: 1rem 0; }
-      .login-poster { min-height: auto; flex-direction: row; align-items: center; gap: 1rem; padding: .85rem; border-right: 2px solid var(--border); border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; }
+      .login-poster { min-height: auto; flex-direction: row; align-items: center; gap: 1rem; padding: .85rem; border-right: 1px solid var(--line-soft); border-bottom: 0; border-radius: 2px 2px 0 0; }
       .route-sketch { display: none; }
-      .login-card { min-height: 390px; padding: 1.25rem; border-radius: 0 0 var(--radius) var(--radius); box-shadow: 3px 3px 0 var(--border); }
+      .login-card { min-height: 390px; padding: 1.25rem; border-radius: 0 0 2px 2px; }
     }
   </style>
 </body>

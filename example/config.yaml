@@ -40,6 +40,13 @@ proxies:
   blog.example.com:
     upstream: http://localhost:3000
     auth: true
+    portal:
+      name: Blog
+      description: Writing and publishing
+      icon: auto                    # Uses https://blog.example.com/favicon.ico
+      group: workspace
+      order: 10
+      hidden: false
 
   # Public API service
   api.example.com:

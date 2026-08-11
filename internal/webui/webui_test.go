@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/abcdlsj/nexo/pkg/config"
+	"github.com/abcdlsj/nexo/pkg/proxy"
 )
 
 func TestSafeLocalRedirect(t *testing.T) {
@@ -106,6 +107,64 @@ func TestAllPagesRenderSelfContainedHTML(t *testing.T) {
 		}
 		if strings.Contains(html, "fonts.googleapis.com") || strings.Contains(html, "fonts.gstatic.com") {
 			t.Errorf("%s contains an external font dependency", name)
+		}
+	}
+}
+
+func TestBuildRouteViewsUsesPortalMetadataAndStableOrder(t *testing.T) {
+	t.Parallel()
+	proxies := map[string]*proxy.Config{
+		"docs.example.com": {Upstream: "http://docs:8080"},
+		"api.example.com": {
+			Upstream: "http://api:9000",
+			Auth:     true,
+			Portal:   &proxy.PortalConfig{Name: "Developer API", Description: "Internal API", Icon: "javascript:alert(1)", Group: "work", Order: 20},
+		},
+		"studio.example.com": {
+			Upstream: "http://studio:4173",
+			Portal:   &proxy.PortalConfig{Name: "Studio", Icon: "/assets/studio.svg", Order: 10},
+		},
+		"hidden.example.com": {Upstream: "http://hidden:80", Portal: &proxy.PortalConfig{Hidden: true}},
+	}
+
+	routes := buildRouteViews(proxies)
+	if len(routes) != 3 {
+		t.Fatalf("buildRouteViews() returned %d routes", len(routes))
+	}
+	wantDomains := []string{"studio.example.com", "api.example.com", "docs.example.com"}
+	for i, want := range wantDomains {
+		if routes[i].Domain != want {
+			t.Errorf("route %d domain = %q, want %q", i, routes[i].Domain, want)
+		}
+	}
+	if routes[0].IconURL != "/assets/studio.svg" || routes[0].Name != "Studio" {
+		t.Errorf("custom portal metadata not applied: %+v", routes[0])
+	}
+	if routes[1].IconURL != "https://api.example.com/favicon.ico" || routes[1].Policy != "OAUTH" {
+		t.Errorf("unsafe icon was not replaced or policy is wrong: %+v", routes[1])
+	}
+	if routes[2].Name != "Docs" || routes[2].Initial != "D" {
+		t.Errorf("default display metadata is wrong: %+v", routes[2])
+	}
+}
+
+func TestDashboardRendersSharedRouteProtocol(t *testing.T) {
+	t.Parallel()
+	page := PageData{Config: &config.Config{}, CurrentIP: "127.0.0.1"}
+	data := DashboardData{PageData: page, Routes: []RouteView{{Domain: "api.example.com", Name: "Developer API", Description: "Internal API", IconURL: "https://api.example.com/favicon.ico", Initial: "D", Kind: "PROXY", Policy: "OAUTH", Href: "https://api.example.com", Auth: true}}, ProtectedRoutes: 1}
+	var output bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&output, "dashboard.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	for _, value := range []string{"ROUTING BOARD", "ROUTE DIRECTORY", "Developer API", "data-route-index=\"0\"", "class=\"app-page\""} {
+		if !strings.Contains(html, value) {
+			t.Errorf("dashboard output missing %q", value)
+		}
+	}
+	for _, removed := range []string{"Control room", "System overview", "All systems operational"} {
+		if strings.Contains(html, removed) {
+			t.Errorf("dashboard output retained removed copy %q", removed)
 		}
 	}
 }

@@ -47,6 +47,7 @@ var (
 
 	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"hasPrefix": strings.HasPrefix,
+		"inc":       func(value int) int { return value + 1 },
 	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
 
@@ -133,7 +134,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *Handler) securityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: http: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -443,14 +444,146 @@ func (h *Handler) render404(w http.ResponseWriter) {
 
 type DashboardData struct {
 	PageData
-	Stats struct {
-		TotalProxies  int
-		ActiveProxies int
-		RedirectCount int
-		CertCount     int
+	Routes          []RouteView
+	ProtectedRoutes int
+}
+
+// RouteView is the stable, presentation-only form of a configured route.
+type RouteView struct {
+	Domain      string
+	Name        string
+	Description string
+	IconURL     string
+	Initial     string
+	Group       string
+	Target      string
+	Kind        string
+	Policy      string
+	Href        string
+	Order       int
+	Auth        bool
+}
+
+func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
+	routes := make([]RouteView, 0, len(proxies))
+	for domain, cfg := range proxies {
+		if cfg == nil || (cfg.Portal != nil && cfg.Portal.Hidden) {
+			continue
+		}
+
+		name := defaultRouteName(domain)
+		description := "Proxy to " + cfg.Upstream
+		kind := "PROXY"
+		target := cfg.Upstream
+		group := "default"
+		order := 0
+		if cfg.Redirect != "" {
+			description = "Redirect to " + cfg.Redirect
+			kind = "REDIRECT"
+			target = cfg.Redirect
+		}
+		if cfg.Portal != nil {
+			if value := strings.TrimSpace(cfg.Portal.Name); value != "" {
+				name = value
+			}
+			if value := strings.TrimSpace(cfg.Portal.Description); value != "" {
+				description = value
+			}
+			if value := strings.TrimSpace(cfg.Portal.Group); value != "" {
+				group = value
+			}
+			order = cfg.Portal.Order
+		}
+
+		policy := "PUBLIC"
+		if cfg.Auth {
+			policy = "OAUTH"
+		}
+		routes = append(routes, RouteView{
+			Domain:      domain,
+			Name:        name,
+			Description: description,
+			IconURL:     portalIconURL(domain, cfg.Portal),
+			Initial:     routeInitial(name),
+			Group:       group,
+			Target:      target,
+			Kind:        kind,
+			Policy:      policy,
+			Href:        "https://" + domain,
+			Order:       order,
+			Auth:        cfg.Auth,
+		})
 	}
-	Proxies map[string]*proxy.Config
-	Certs   []CertInfo
+
+	slices.SortFunc(routes, func(a, b RouteView) int {
+		if a.Order != b.Order {
+			if a.Order == 0 {
+				return 1
+			}
+			if b.Order == 0 {
+				return -1
+			}
+			if a.Order < b.Order {
+				return -1
+			}
+			return 1
+		}
+		if result := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); result != 0 {
+			return result
+		}
+		return strings.Compare(a.Domain, b.Domain)
+	})
+	return routes
+}
+
+func defaultRouteName(domain string) string {
+	label := strings.SplitN(domain, ".", 2)[0]
+	words := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '_' })
+	for i, word := range words {
+		letters := []rune(word)
+		if len(letters) > 0 {
+			letters[0] = []rune(strings.ToUpper(string(letters[0])))[0]
+			words[i] = string(letters)
+		}
+	}
+	if len(words) == 0 {
+		return domain
+	}
+	return strings.Join(words, " ")
+}
+
+func routeInitial(name string) string {
+	letters := []rune(strings.TrimSpace(name))
+	if len(letters) == 0 {
+		return "N"
+	}
+	return strings.ToUpper(string(letters[0]))
+}
+
+func portalIconURL(domain string, portal *proxy.PortalConfig) string {
+	fallback := "https://" + domain + "/favicon.ico"
+	if portal == nil {
+		return fallback
+	}
+	raw := strings.TrimSpace(portal.Icon)
+	if raw == "" || strings.EqualFold(raw, "auto") {
+		return fallback
+	}
+	if validPortalIcon(raw) {
+		return raw
+	}
+	return fallback
+}
+
+func validPortalIcon(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "auto") {
+		return true
+	}
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return true
+	}
+	return validHTTPURL(raw)
 }
 
 type CertInfo struct {
@@ -471,20 +604,17 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	data := DashboardData{
 		PageData: h.newPageData(r, "dashboard"),
-		Proxies:  h.cfg.Proxies,
+		Routes:   buildRouteViews(h.cfg.Proxies),
 	}
 
-	data.Stats.TotalProxies = len(h.cfg.Proxies)
 	for _, p := range h.cfg.Proxies {
-		if p.Upstream != "" {
-			data.Stats.ActiveProxies++
-		} else if p.Redirect != "" {
-			data.Stats.RedirectCount++
+		if p == nil {
+			continue
+		}
+		if p.Auth && (p.Portal == nil || !p.Portal.Hidden) {
+			data.ProtectedRoutes++
 		}
 	}
-
-	data.Certs = h.getCertInfo()
-	data.Stats.CertCount = len(data.Certs)
 
 	if err := tmpl.ExecuteTemplate(w, "dashboard.html", data); err != nil {
 		log.Error("Failed to render dashboard", "err", err)
@@ -548,6 +678,36 @@ func (h *Handler) handleAddProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg.Auth = r.FormValue("auth") == "on"
+
+	portalName := strings.TrimSpace(r.FormValue("portal_name"))
+	portalDescription := strings.TrimSpace(r.FormValue("portal_description"))
+	portalIcon := strings.TrimSpace(r.FormValue("portal_icon"))
+	portalGroup := strings.TrimSpace(r.FormValue("portal_group"))
+	portalOrderRaw := strings.TrimSpace(r.FormValue("portal_order"))
+	portalHidden := r.FormValue("portal_hidden") == "on"
+	if !validPortalIcon(portalIcon) {
+		http.Redirect(w, r, "/proxies?error=invalid_portal_icon", http.StatusSeeOther)
+		return
+	}
+	portalOrder := 0
+	if portalOrderRaw != "" {
+		value, err := strconv.Atoi(portalOrderRaw)
+		if err != nil {
+			http.Redirect(w, r, "/proxies?error=invalid_portal_order", http.StatusSeeOther)
+			return
+		}
+		portalOrder = value
+	}
+	if portalName != "" || portalDescription != "" || portalIcon != "" || portalGroup != "" || portalOrder != 0 || portalHidden {
+		cfg.Portal = &proxy.PortalConfig{
+			Name:        portalName,
+			Description: portalDescription,
+			Icon:        portalIcon,
+			Group:       portalGroup,
+			Order:       portalOrder,
+			Hidden:      portalHidden,
+		}
+	}
 
 	if h.cfg.Proxies == nil {
 		h.cfg.Proxies = make(map[string]*proxy.Config)

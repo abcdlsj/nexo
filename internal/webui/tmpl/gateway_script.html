@@ -1,0 +1,84 @@
+{{define "gateway_script"}}
+<script>
+  (function () {
+    var search = document.getElementById('route-search');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.gateway-route-row'));
+    var nodes = Array.prototype.slice.call(document.querySelectorAll('.topology-service'));
+    var filters = Array.prototype.slice.call(document.querySelectorAll('.directory-filter'));
+    var empty = document.getElementById('route-filter-empty');
+    var activeFilter = 'all';
+
+    document.querySelectorAll('img[data-favicon]').forEach(function (image) {
+      image.addEventListener('error', function () { image.hidden = true; }, { once: true });
+    });
+
+    function relativePoint(element, side, canvasBox) {
+      var box = element.getBoundingClientRect();
+      return { x: (side === 'right' ? box.right : box.left) - canvasBox.left, y: box.top + box.height / 2 - canvasBox.top };
+    }
+
+    function connectorPath(from, to) {
+      var middle = from.x + (to.x - from.x) * .52;
+      return 'M ' + from.x + ' ' + from.y + ' H ' + middle + ' V ' + to.y + ' H ' + to.x;
+    }
+
+    function setPath(selector, path) {
+      document.querySelectorAll(selector).forEach(function (wire) { wire.setAttribute('d', path); });
+    }
+
+    function drawTopology() {
+      var canvas = document.getElementById('topology-canvas');
+      var edge = document.getElementById('edge-node');
+      var core = document.getElementById('core-node');
+      if (!canvas || !edge || !core) return;
+      var canvasBox = canvas.getBoundingClientRect();
+      var svg = document.getElementById('topology-wires');
+      svg.setAttribute('viewBox', '0 0 ' + Math.max(canvas.scrollWidth, canvas.clientWidth) + ' ' + Math.max(canvas.scrollHeight, canvas.clientHeight));
+      setPath('#ingress-wire-base, #ingress-wire-live', connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(core, 'left', canvasBox)));
+      nodes.forEach(function (node) {
+        var selector = '.route-wire-' + node.dataset.routeIndex;
+        setPath(selector, connectorPath(relativePoint(core, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));
+        document.querySelectorAll(selector).forEach(function (wire) { wire.hidden = node.hidden; });
+      });
+    }
+
+    function applyFilter() {
+      var query = search ? search.value.trim().toLocaleLowerCase() : '';
+      var visible = 0;
+      rows.forEach(function (row) {
+        var match = (activeFilter === 'all' || row.dataset.policy === activeFilter) && (!query || row.dataset.search.toLocaleLowerCase().includes(query));
+        row.hidden = !match;
+        if (match) visible++;
+      });
+      nodes.forEach(function (node) {
+        node.hidden = !((activeFilter === 'all' || node.dataset.policy === activeFilter) && (!query || node.dataset.search.toLocaleLowerCase().includes(query)));
+      });
+      if (empty) empty.classList.toggle('visible', visible === 0);
+      requestAnimationFrame(drawTopology);
+    }
+
+    if (search) search.addEventListener('input', applyFilter);
+    filters.forEach(function (filter) {
+      filter.addEventListener('click', function () {
+        activeFilter = filter.dataset.filter;
+        filters.forEach(function (item) {
+          var active = item === filter;
+          item.classList.toggle('active', active);
+          item.setAttribute('aria-pressed', String(active));
+        });
+        applyFilter();
+      });
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === '/' && search && document.activeElement !== search) { event.preventDefault(); search.focus(); }
+      if (event.key === 'Escape' && search) { search.value = ''; search.blur(); applyFilter(); }
+    });
+    window.addEventListener('resize', drawTopology);
+    if ('ResizeObserver' in window) {
+      var canvas = document.getElementById('topology-canvas');
+      if (canvas) new ResizeObserver(drawTopology).observe(canvas);
+    }
+    requestAnimationFrame(drawTopology);
+  }());
+</script>
+{{end}}

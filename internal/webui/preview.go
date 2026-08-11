@@ -79,11 +79,7 @@ func newPreviewHandler() http.Handler {
 		}
 		switch r.URL.Path {
 		case "/":
-			data := DashboardData{PageData: page("dashboard"), Proxies: proxies, Certs: certs}
-			data.Stats.TotalProxies = len(proxies)
-			data.Stats.ActiveProxies = 3
-			data.Stats.RedirectCount = 1
-			data.Stats.CertCount = len(certs)
+			data := DashboardData{PageData: page("dashboard"), Routes: buildRouteViews(proxies), ProtectedRoutes: 2}
 			render(w, "dashboard.html", data, http.StatusOK)
 		case "/proxies":
 			render(w, "proxies.html", ProxiesData{PageData: page("proxies"), Proxies: proxies}, http.StatusOK)
@@ -113,10 +109,10 @@ func newPreviewHandler() http.Handler {
 
 func previewFixtures() (*config.Config, map[string]*proxy.Config, []CertInfo, *traffic.TrafficData) {
 	proxies := map[string]*proxy.Config{
-		"api.nexo.local":     {Upstream: "http://127.0.0.1:9001", Auth: true},
-		"studio.nexo.local":  {Upstream: "http://127.0.0.1:4173"},
-		"metrics.nexo.local": {Upstream: "http://prometheus:9090", Auth: true},
-		"old.nexo.local":     {Redirect: "https://studio.nexo.local"},
+		"api.nexo.local":     {Upstream: "http://127.0.0.1:9001", Auth: true, Portal: &proxy.PortalConfig{Name: "Developer API", Description: "Internal API and developer console", Group: "workspace", Order: 20}},
+		"studio.nexo.local":  {Upstream: "http://127.0.0.1:4173", Portal: &proxy.PortalConfig{Name: "Studio", Description: "Content, assets and publishing", Group: "workspace", Order: 10}},
+		"metrics.nexo.local": {Upstream: "http://prometheus:9090", Auth: true, Portal: &proxy.PortalConfig{Name: "Observability", Description: "Metrics, logs and alerts", Group: "system", Order: 30}},
+		"old.nexo.local":     {Redirect: "https://studio.nexo.local", Portal: &proxy.PortalConfig{Name: "Legacy Studio", Description: "Redirect to Studio", Group: "system", Order: 40}},
 	}
 	cfg := &config.Config{
 		Email:      "ops@nexo.local",

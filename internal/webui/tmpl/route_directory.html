@@ -1,0 +1,31 @@
+{{define "route_directory"}}
+<section class="directory-panel" aria-labelledby="route-directory-title">
+  <header class="board-header">
+    <div class="board-title"><small>02</small><h2 id="route-directory-title">ROUTE DIRECTORY</h2></div>
+    <div class="directory-filters" aria-label="Route policy filter">
+      <button class="directory-filter active" type="button" data-filter="all" aria-pressed="true">ALL / {{printf "%02d" (len .Routes)}}</button>
+      <button class="directory-filter" type="button" data-filter="public" aria-pressed="false">PUBLIC</button>
+      <button class="directory-filter" type="button" data-filter="protected" aria-pressed="false">OAUTH</button>
+    </div>
+  </header>
+
+  <div class="directory-scroll" id="route-directory-scroll">
+    {{if .Routes}}
+      {{range $index, $route := .Routes}}
+      <a class="gateway-route-row" href="{{$route.Href}}" target="_blank" rel="noopener noreferrer" data-route-index="{{$index}}" data-policy="{{if $route.Auth}}protected{{else}}public{{end}}" data-search="{{$route.Name}} {{$route.Description}} {{$route.Domain}} {{$route.Group}} {{$route.Kind}} {{$route.Policy}}">
+        <span class="route-number">{{printf "%02d" (inc $index)}}</span>
+        <span class="gateway-icon">{{template "route_icon" $route}}</span>
+        <span class="gateway-copy"><span class="gateway-name">{{$route.Name}}</span><span class="gateway-description">{{$route.Description}}</span></span>
+        <span class="route-kind">{{$route.Kind}}</span>
+        <span class="route-policy {{if $route.Auth}}protected{{end}}">{{$route.Policy}}</span>
+        <span class="gateway-domain">{{$route.Domain}}</span>
+        <span class="gateway-open" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 5h5v5M19 5l-8 8M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></span>
+      </a>
+      {{end}}
+      <div class="route-filter-empty" id="route-filter-empty" role="status" aria-live="polite">NO ROUTE MATCHES THE CURRENT FILTER</div>
+    {{else}}
+      <div class="gateway-empty">ADD A ROUTE TO PUBLISH A GATEWAY ENTRY</div>
+    {{end}}
+  </div>
+</section>
+{{end}}

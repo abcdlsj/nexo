@@ -4,7 +4,7 @@
 
 Nexo maps domains to upstream services or HTTPS redirects, obtains certificates through Cloudflare DNS-01, and keeps day-to-day operations visible through a self-contained Web UI.
 
-![Nexo dashboard with fake preview data](docs/assets/nexo-dashboard.png)
+![Nexo switchboard with dynamic topology and route directory](docs/assets/nexo-dashboard.png)
 
 ## Why Nexo
 
@@ -163,6 +163,27 @@ proxies:
   old.example.com:
     redirect: https://www.example.com
 ```
+
+### Gateway directory metadata (optional)
+
+Every configured route appears in the gateway directory without additional configuration. Nexo derives the display name from the domain, loads `https://<domain>/favicon.ico`, and describes the configured proxy or redirect target.
+
+Use `portal` only when a route needs custom presentation or ordering:
+
+```yaml
+proxies:
+  studio.example.com:
+    upstream: http://127.0.0.1:4173
+    portal:
+      name: Studio
+      description: Content, assets and publishing
+      icon: auto
+      group: workspace
+      order: 10
+      hidden: false
+```
+
+`icon` accepts `auto`, a root-relative path, or an HTTP(S) URL. Failed icon requests fall back to the first letter of the display name. Set `hidden: true` to keep a route active without listing it on the gateway dashboard.
 
 ### GitHub OAuth protection
 
