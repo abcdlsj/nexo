@@ -149,12 +149,36 @@ proxies:
 ```
 
 - `write_timeout` and `response_header_timeout` accept Go duration strings
-  (e.g. `5m`, `30s`). A global `write_timeout` at the top level applies to all
-  routes unless a route overrides it; both default to disabled.
+  (e.g. `5m`, `30s`). A global `write_timeout` or `response_header_timeout` at
+  the top level applies to all routes unless a route overrides it.
+  `write_timeout` defaults to disabled; `response_header_timeout` defaults to
+  30s when neither is configured, and `"0"` waits indefinitely.
 - `retry` is opt-in and safe by construction: it retries only idempotent
   methods and never re-sends POST/PUT/PATCH bodies.
 - Avoid `write_timeout` on WebSocket routes; a total write cap is incompatible
   with hijacked long-lived connections.
+
+### Tunneled upstreams (gnar)
+
+Nexo injects a sensible `Cache-Control` when the upstream omits one. Tunnel
+traffic is dynamic and can legitimately take a long time before the first
+response headers arrive, so routes fronting gnar should both widen the header
+timeout and leave response headers untouched:
+
+```yaml
+response_header_timeout: 300s
+
+proxies:
+  tunnel.example.com:
+    upstream: http://127.0.0.1:8080
+    cache: false
+```
+
+`cache` defaults to `true`, preserving the historical behavior. Setting it to
+`false` disables automatic `Cache-Control` injection for that route and passes
+upstream response headers through unchanged. `response_header_timeout` here is
+the global default; the route can still override it with its own
+`response_header_timeout`, including `"0"` for an unlimited wait.
 
 ### HTTPS redirect
 

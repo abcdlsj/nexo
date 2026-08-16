@@ -5,6 +5,7 @@ email: your-email@example.com
 staging: false                    # Set to true to use Let's Encrypt staging environment
 base_dir: /etc/nexo               # Base directory for nexo data
 cert_dir: /etc/nexo/certs         # Certificate storage directory
+# response_header_timeout: 300s   # Global default for upstream header wait; "0" waits indefinitely
 
 # Cloudflare DNS API configuration (required for DNS-01 challenge)
 cloudflare:
@@ -56,6 +57,13 @@ proxies:
     # response_header_timeout: "30s"  # wait for upstream response headers; "0" waits indefinitely
     # write_timeout: "2m"             # total response write cap; empty/"0" disables
     # retry: true                     # retry once before response starts, idempotent methods only
+
+  # Tunnel route in front of gnar: allow slow first headers and pass upstream
+  # response headers through without Nexo's automatic Cache-Control injection.
+  tunnel.example.com:
+    upstream: http://localhost:8081
+    response_header_timeout: 300s
+    cache: false
 
   # Main website
   www.example.com:

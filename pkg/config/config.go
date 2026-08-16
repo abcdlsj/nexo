@@ -29,6 +29,13 @@ type Config struct {
 	// Accepts Go duration strings (e.g. "2m"); empty or "0" disables the cap.
 	// Routes can override this with their own write_timeout.
 	WriteTimeout string `mapstructure:"write_timeout" yaml:"write_timeout,omitempty"`
+
+	// ResponseHeaderTimeout caps how long the proxy waits for upstream response
+	// headers for all routes. Accepts Go duration strings; "0" waits
+	// indefinitely. Routes can override this with their own
+	// response_header_timeout. When neither is set, the historical 30s default
+	// applies.
+	ResponseHeaderTimeout string `mapstructure:"response_header_timeout" yaml:"response_header_timeout,omitempty"`
 }
 
 // IsIPBlocked checks exact IPs and CIDR ranges from the security blacklist.

@@ -17,6 +17,8 @@ import (
 )
 
 const (
+	defaultResponseHeaderTimeout = 30 * time.Second
+
 	// Cache durations
 	longTermCache  = "public, max-age=86400, stale-while-revalidate=3600" // 1 day, stale 1 hour
 	shortTermCache = "public, max-age=300, stale-while-revalidate=60"     // 5 mins, stale 1 min
@@ -46,10 +48,26 @@ type Config struct {
 	// headers. Accepts Go duration strings; "0" waits indefinitely.
 	ResponseHeaderTimeout string `mapstructure:"response_header_timeout" yaml:"response_header_timeout,omitempty"`
 
+	// Cache controls whether Nexo injects Cache-Control when the upstream omits
+	// it. nil means enabled (the default); setting it to false passes upstream
+	// response headers through untouched, which is recommended in front of a
+	// tunnel such as gnar.
+	Cache *bool `mapstructure:"cache" yaml:"cache,omitempty"`
+
 	// Retry enables one retry when an upstream connection fails before any
 	// response byte is sent. For safety it only applies to idempotent methods
 	// (GET/HEAD/OPTIONS) and never when the client already canceled.
 	Retry bool `mapstructure:"retry" yaml:"retry,omitempty"`
+}
+
+// CacheEnabled reports whether automatic Cache-Control injection is enabled.
+// The field is a pointer so an unset value keeps the historical default of
+// true while `cache: false` can be represented and preserved.
+func (c *Config) CacheEnabled() bool {
+	if c == nil || c.Cache == nil {
+		return true
+	}
+	return *c.Cache
 }
 
 // PortalConfig controls how a route appears on the Nexo gateway dashboard.
@@ -71,18 +89,20 @@ type Handler struct {
 	upstream              string
 	host                  string
 	writeTimeoutRaw       string
-	responseHeaderTimeout string
+	responseHeaderTimeout time.Duration
+	cacheEnabled          bool
 	retryEnabled          bool
 }
 
 // ConfigChanged checks if the configuration has changed
-func (h *Handler) ConfigChanged(newCfg *Config) bool {
+func (h *Handler) ConfigChanged(newCfg *Config, responseHeaderTimeoutDefault string) bool {
 	if h.redirect != "" {
 		return h.redirect != newCfg.Redirect
 	}
 	return h.upstream != newCfg.Upstream ||
 		h.writeTimeoutRaw != newCfg.WriteTimeout ||
-		h.responseHeaderTimeout != newCfg.ResponseHeaderTimeout ||
+		h.responseHeaderTimeout != resolveResponseHeaderTimeout(newCfg, responseHeaderTimeoutDefault) ||
+		h.cacheEnabled != newCfg.CacheEnabled() ||
 		h.retryEnabled != newCfg.Retry
 }
 
@@ -112,6 +132,18 @@ func ParseDuration(raw string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// resolveResponseHeaderTimeout applies the route override first and falls back
+// to the global default when the route leaves response_header_timeout unset.
+// Both unset keeps the historical 30s default; an explicit "0" disables the
+// timeout.
+func resolveResponseHeaderTimeout(cfg *Config, responseHeaderTimeoutDefault string) time.Duration {
+	raw := cfg.ResponseHeaderTimeout
+	if raw == "" {
+		raw = responseHeaderTimeoutDefault
+	}
+	return ParseDuration(raw, defaultResponseHeaderTimeout)
+}
+
 // newProxyTransport creates a Transport dedicated to upstream connections.
 // Each proxy gets its own pool to isolate failures between upstreams.
 func newProxyTransport(responseHeaderTimeout time.Duration) *http.Transport {
@@ -131,8 +163,10 @@ func newProxyTransport(responseHeaderTimeout time.Duration) *http.Transport {
 	}
 }
 
-// New creates a new proxy handler
-func New(cfg *Config, host string) *Handler {
+// New creates a new proxy handler. responseHeaderTimeoutDefault is the
+// server-level response_header_timeout used by routes that do not set their
+// own value; an empty string keeps the historical 30s default.
+func New(cfg *Config, host string, responseHeaderTimeoutDefault string) *Handler {
 	if cfg.Redirect != "" {
 		return &Handler{
 			redirect: cfg.Redirect,
@@ -147,11 +181,11 @@ func New(cfg *Config, host string) *Handler {
 	}
 
 	p := httputil.NewSingleHostReverseProxy(target)
-	defaultResponseHeaderTimeout := 30 * time.Second
-	p.Transport = newProxyTransport(ParseDuration(cfg.ResponseHeaderTimeout, defaultResponseHeaderTimeout))
+	responseHeaderTimeout := resolveResponseHeaderTimeout(cfg, responseHeaderTimeoutDefault)
+	p.Transport = newProxyTransport(responseHeaderTimeout)
 	p.FlushInterval = -1 // flush immediately for streaming responses
 	p.Director = createDirector(p.Director)
-	p.ModifyResponse = createResponseModifier(target, host)
+	p.ModifyResponse = createResponseModifier(target, host, cfg.CacheEnabled())
 	p.ErrorHandler = createErrorHandler(host, p, cfg.Retry)
 
 	return &Handler{
@@ -159,7 +193,8 @@ func New(cfg *Config, host string) *Handler {
 		upstream:              cfg.Upstream,
 		host:                  host,
 		writeTimeoutRaw:       cfg.WriteTimeout,
-		responseHeaderTimeout: cfg.ResponseHeaderTimeout,
+		responseHeaderTimeout: responseHeaderTimeout,
+		cacheEnabled:          cfg.CacheEnabled(),
 		retryEnabled:          cfg.Retry,
 	}
 }
@@ -192,12 +227,14 @@ func createDirector(orig func(*http.Request)) func(*http.Request) {
 	}
 }
 
-func createResponseModifier(target *url.URL, domain string) func(*http.Response) error {
+func createResponseModifier(target *url.URL, domain string, cacheHeaders bool) func(*http.Response) error {
 	return func(r *http.Response) error {
 		if err := handleRedirect(r, target, domain); err != nil {
 			return err
 		}
-		setCacheHeaders(r)
+		if cacheHeaders {
+			setCacheHeaders(r)
+		}
 		return nil
 	}
 }

@@ -93,20 +93,25 @@ func TestParseDurationSetting(t *testing.T) {
 func TestResponseHeaderTimeout(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name string
-		raw  string
-		want time.Duration
+		name   string
+		raw    string
+		global string
+		want   time.Duration
 	}{
-		{name: "default", raw: "", want: 30 * time.Second},
-		{name: "disabled", raw: "0", want: 0},
-		{name: "long first byte", raw: "5m", want: 5 * time.Minute},
+		{name: "default", raw: "", global: "", want: 30 * time.Second},
+		{name: "route disabled", raw: "0", global: "", want: 0},
+		{name: "long first byte", raw: "5m", global: "", want: 5 * time.Minute},
+		{name: "global default", raw: "", global: "5m", want: 5 * time.Minute},
+		{name: "route overrides global", raw: "10s", global: "5m", want: 10 * time.Second},
+		{name: "global disabled", raw: "", global: "0", want: 0},
+		{name: "invalid global falls back", raw: "", global: "soon", want: 30 * time.Second},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &Config{Upstream: "http://127.0.0.1:1", ResponseHeaderTimeout: tc.raw}
-			h := New(cfg, "example.test")
+			h := New(cfg, "example.test", tc.global)
 			if h == nil {
 				t.Fatal("New returned nil handler")
 			}
@@ -118,6 +123,43 @@ func TestResponseHeaderTimeout(t *testing.T) {
 				t.Fatalf("ResponseHeaderTimeout = %v, want %v", tr.ResponseHeaderTimeout, tc.want)
 			}
 		})
+	}
+}
+
+func TestCacheDisabledPassesHeadersThrough(t *testing.T) {
+	t.Parallel()
+	cache := false
+	cfg := &Config{Upstream: "http://127.0.0.1:1", Cache: &cache}
+	h := New(cfg, "example.test", "")
+	if h == nil {
+		t.Fatal("New returned nil handler")
+	}
+
+	req := &http.Request{URL: &url.URL{Path: "/account.js"}, Header: make(http.Header)}
+	response := &http.Response{StatusCode: http.StatusOK, Request: req, Header: make(http.Header)}
+	if err := h.proxy.ModifyResponse(response); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("cache: false injected Cache-Control %q", got)
+	}
+}
+
+func TestCacheEnabledInjectsHeaders(t *testing.T) {
+	t.Parallel()
+	h := New(&Config{Upstream: "http://127.0.0.1:1"}, "example.test", "")
+	if h == nil {
+		t.Fatal("New returned nil handler")
+	}
+
+	req := &http.Request{URL: &url.URL{Path: "/"}, Header: make(http.Header)}
+	response := &http.Response{StatusCode: http.StatusOK, Request: req, Header: make(http.Header)}
+	response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.proxy.ModifyResponse(response); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Header.Get("Cache-Control"); got != noCache {
+		t.Fatalf("cache enabled Cache-Control = %q, want %q", got, noCache)
 	}
 }
 
@@ -155,20 +197,33 @@ func TestShouldRetryUpstream(t *testing.T) {
 func TestConfigChanged(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Upstream: "http://127.0.0.1:1"}
-	h := New(cfg, "example.test")
+	h := New(cfg, "example.test", "")
 	if h == nil {
 		t.Fatal("New returned nil handler")
 	}
-	if h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1"}) {
+	if h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1"}, "") {
 		t.Fatal("identical config reported as changed")
 	}
-	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", WriteTimeout: "5m"}) {
+	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", WriteTimeout: "5m"}, "") {
 		t.Fatal("write_timeout change not detected")
 	}
-	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", ResponseHeaderTimeout: "0"}) {
+	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", ResponseHeaderTimeout: "0"}, "") {
 		t.Fatal("response_header_timeout change not detected")
 	}
-	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", Retry: true}) {
+	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1"}, "5m") {
+		t.Fatal("global response_header_timeout change not detected")
+	}
+	cache := false
+	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", Cache: &cache}, "") {
+		t.Fatal("cache change not detected")
+	}
+	if !h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", Retry: true}, "") {
 		t.Fatal("retry change not detected")
+	}
+
+	explicit := &Config{Upstream: "http://127.0.0.1:1", ResponseHeaderTimeout: "5m"}
+	h = New(explicit, "example.test", "10m")
+	if h.ConfigChanged(&Config{Upstream: "http://127.0.0.1:1", ResponseHeaderTimeout: "5m"}, "2m") {
+		t.Fatal("equivalent effective response_header_timeout reported as changed")
 	}
 }

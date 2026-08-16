@@ -84,14 +84,16 @@ func TestSecurityHeaders(t *testing.T) {
 func TestUpdateRoute(t *testing.T) {
 	t.Parallel()
 	originalDomain := "api.example.com"
+	cacheEnabled := false
 	original := &proxy.Config{
 		Upstream:              "http://127.0.0.1:9000",
 		WriteTimeout:          "5m",
 		ResponseHeaderTimeout: "15s",
+		Cache:                 &cacheEnabled,
 		Retry:                 true,
 		Portal:                &proxy.PortalConfig{Name: "Old API"},
 	}
-	cfg := &config.Config{Proxies: map[string]*proxy.Config{originalDomain: original}}
+	cfg := &config.Config{ResponseHeaderTimeout: "300s", Proxies: map[string]*proxy.Config{originalDomain: original}}
 	handler := &Handler{configs: newConfigStore(cfg, t.TempDir()+"/config.yaml", nil)}
 	form := url.Values{
 		"original_domain":    {originalDomain},
@@ -128,6 +130,12 @@ func TestUpdateRoute(t *testing.T) {
 	}
 	if updated.WriteTimeout != "5m" || updated.ResponseHeaderTimeout != "15s" || !updated.Retry {
 		t.Fatalf("advanced route settings were lost: %+v", updated)
+	}
+	if updated.Cache == nil || *updated.Cache {
+		t.Fatalf("cache: false was lost during route update: %+v", updated)
+	}
+	if handler.config().ResponseHeaderTimeout != "300s" {
+		t.Fatalf("top-level response_header_timeout was lost during route update: %+v", handler.config())
 	}
 	if updated.Portal == nil || updated.Portal.Name != "Developer API" || updated.Portal.Kind != "API" || updated.Portal.Order != 12 || !updated.Portal.Hidden {
 		t.Fatalf("gateway directory settings were not updated: %+v", updated.Portal)

@@ -804,7 +804,7 @@ func (s *Server) proxyConfigChanged(domain string, newCfg *proxy.Config) bool {
 	if !ok {
 		return true
 	}
-	return oldHandler.ConfigChanged(newCfg)
+	return oldHandler.ConfigChanged(newCfg, s.config().ResponseHeaderTimeout)
 }
 
 func (s *Server) createProxyHandler(domain string, cfg *proxy.Config) (*proxy.Handler, error) {
@@ -827,7 +827,7 @@ func (s *Server) createProxyHandler(domain string, cfg *proxy.Config) (*proxy.Ha
 		return nil, err
 	}
 
-	handler := proxy.New(cfg, domain)
+	handler := proxy.New(cfg, domain, s.config().ResponseHeaderTimeout)
 	if handler == nil {
 		return nil, fmt.Errorf("failed to create proxy handler for domain %s", domain)
 	}
@@ -854,7 +854,7 @@ func (s *Server) setupProxy(domain string, cfg *proxy.Config, proxies map[string
 		return err
 	}
 
-	proxies[domain] = proxy.New(cfg, domain)
+	proxies[domain] = proxy.New(cfg, domain, s.config().ResponseHeaderTimeout)
 	return nil
 }
 
