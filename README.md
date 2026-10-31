@@ -177,6 +177,30 @@ than 30s to arrive, so widen the window together with the body limit:
 read_timeout: 10m
 ```
 
+### OAuth path exclusions
+
+Routes with `auth: true` normally protect every path. `auth_exclude` keeps
+selected paths public, which is required for PWA assets (manifest, icons) that
+browsers fetch without a session:
+
+```yaml
+proxies:
+  app.example.com:
+    upstream: http://127.0.0.1:3000
+    auth: true
+    auth_exclude:
+      - /manifest.webmanifest
+      - /favicon.ico
+      - /apple-touch-icon.png
+      - /icon-*.png
+```
+
+- Each entry must start with `/`. Without a wildcard it must match the request
+  path exactly; `*` matches any run of characters (e.g. `/icon-*.png`).
+- Excluded requests are proxied without OAuth and do not carry `X-Auth-User`.
+- The same list can be edited per route in the Web UI under **Auth exclusions**.
+
+
 ### Tunneled upstreams (gnar)
 
 Nexo injects a sensible `Cache-Control` when the upstream omits one. Tunnel

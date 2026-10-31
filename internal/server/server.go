@@ -681,8 +681,8 @@ func (s *Server) handleHTTPS() http.Handler {
 			}
 		}
 
-		// Check authentication if required
-		if cfg != nil && cfg.Auth && s.authm != nil && s.authm.Enabled() {
+		// Check authentication if required, honoring per-route path exclusions
+		if cfg != nil && cfg.Auth && s.authm != nil && s.authm.Enabled() && !cfg.IsAuthExcluded(r.URL.Path) {
 			result := s.authm.CheckAuth(r)
 			if result.User == "" {
 				s.authm.RedirectToAuth(w, r, host)

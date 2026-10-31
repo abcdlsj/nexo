@@ -40,6 +40,10 @@ type Config struct {
 	Auth     bool          `mapstructure:"auth" yaml:"auth,omitempty"` // Enable OAuth authentication for this proxy
 	Portal   *PortalConfig `mapstructure:"portal" yaml:"portal,omitempty"`
 
+	// AuthExclude lists request paths that bypass OAuth while Auth is on.
+	// Entries must start with "/"; "*" matches any run of characters.
+	AuthExclude []string `mapstructure:"auth_exclude" yaml:"auth_exclude,omitempty"`
+
 	// WriteTimeout optionally caps the total time allowed to write a response
 	// for this route. Accepts Go duration strings (e.g. "5m"); empty or "0"
 	// disables the cap so long-lived streams (SSE/WebSocket) are not cut.
@@ -59,6 +63,64 @@ type Config struct {
 	// response byte is sent. For safety it only applies to idempotent methods
 	// (GET/HEAD/OPTIONS) and never when the client already canceled.
 	Retry bool `mapstructure:"retry" yaml:"retry,omitempty"`
+}
+
+// IsAuthExcluded reports whether the request path bypasses OAuth for this route.
+// Patterns are exact matches unless they end with "*", which matches by prefix.
+func (c *Config) IsAuthExcluded(requestPath string) bool {
+	if c == nil || len(c.AuthExclude) == 0 {
+		return false
+	}
+
+	for _, raw := range c.AuthExclude {
+		pattern := strings.TrimSpace(raw)
+		if !strings.HasPrefix(pattern, "/") {
+			continue
+		}
+
+		if strings.Contains(pattern, "*") {
+			if wildcardMatch(pattern, requestPath) {
+				return true
+			}
+			continue
+		}
+
+		if requestPath == pattern {
+			return true
+		}
+	}
+
+	return false
+}
+
+// wildcardMatch reports whether s matches pattern, where "*" matches any run of characters.
+func wildcardMatch(pattern, s string) bool {
+	pi, si := 0, 0
+	star, retry := -1, 0
+
+	for si < len(s) {
+		switch {
+		case pi < len(pattern) && pattern[pi] == s[si]:
+			pi++
+			si++
+		case pi < len(pattern) && pattern[pi] == '*':
+			star = pi
+			retry = si
+			pi++
+		case star >= 0:
+			retry++
+			si = retry
+			pi = star + 1
+		default:
+			return false
+		}
+	}
+
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
+	}
+
+	return pi == len(pattern)
 }
 
 // CacheEnabled reports whether automatic Cache-Control injection is enabled.

@@ -242,6 +242,7 @@ type RouteFormData struct {
 	Upstream          string
 	Redirect          string
 	Auth              bool
+	AuthExclude       string
 	PortalName        string
 	PortalDescription string
 	PortalIcon        string
@@ -263,6 +264,7 @@ func newRouteFormData(domain string, cfg *proxy.Config) RouteFormData {
 	form.Upstream = cfg.Upstream
 	form.Redirect = cfg.Redirect
 	form.Auth = cfg.Auth
+	form.AuthExclude = strings.Join(cfg.AuthExclude, ", ")
 	if cfg.Upstream == "" && cfg.Redirect != "" {
 		form.Type = "redirect"
 	}
@@ -383,6 +385,31 @@ func (h *Handler) handleUpdateProxy(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/proxies?message=Route+updated", http.StatusSeeOther)
 }
 
+// parseAuthExclude splits a comma separated path list, dropping blanks and duplicates.
+func parseAuthExclude(raw string) []string {
+	seen := make(map[string]bool)
+	paths := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		path := strings.TrimSpace(part)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// validAuthExclude requires every pattern to be an absolute path.
+func validAuthExclude(paths []string) bool {
+	for _, path := range paths {
+		if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+			return false
+		}
+	}
+	return true
+}
+
 func parseRouteForm(r *http.Request, current *proxy.Config) (string, *proxy.Config, string) {
 	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(r.FormValue("domain"))), ".")
 	if !validDomain(domain, false) {
@@ -396,6 +423,10 @@ func parseRouteForm(r *http.Request, current *proxy.Config) (string, *proxy.Conf
 	cfg.Upstream = ""
 	cfg.Redirect = ""
 	cfg.Auth = false
+	cfg.AuthExclude = parseAuthExclude(r.FormValue("auth_exclude"))
+	if !validAuthExclude(cfg.AuthExclude) {
+		return "", nil, "invalid_auth_exclude"
+	}
 
 	switch r.FormValue("type") {
 	case "proxy":

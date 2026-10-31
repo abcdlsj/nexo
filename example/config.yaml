@@ -43,6 +43,9 @@ proxies:
   blog.example.com:
     upstream: http://localhost:3000
     auth: true
+    # auth_exclude:                   # paths that stay public (PWA assets, health checks)
+    #   - /manifest.webmanifest
+    #   - /icon-*.png
     portal:
       name: Blog
       description: Writing and publishing

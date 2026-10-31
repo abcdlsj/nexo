@@ -63,6 +63,16 @@
     <label class="switch-row"><input type="checkbox" name="portal_hidden" {{if $form.PortalHidden}}checked{{end}}> Hide from directory</label>
   </details>
 
+  <details class="route-settings">
+    <summary>Auth exclusions</summary>
+    <div class="route-settings-grid">
+      <div class="form-group route-settings-wide">
+        <label for="{{$id}}-auth-exclude">Skip OAuth for paths</label>
+        <input type="text" id="{{$id}}-auth-exclude" name="auth_exclude" value="{{$form.AuthExclude}}" placeholder="/manifest.webmanifest, /icon-*.png" autocomplete="off">
+      </div>
+    </div>
+  </details>
+
   <div class="route-form-actions">
     <label class="switch-row"><input type="checkbox" name="auth" data-route-auth {{if $form.Auth}}checked{{end}}> OAuth</label>
     <div class="route-submit-actions">
