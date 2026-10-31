@@ -54,6 +54,10 @@ const (
 	renewalThreshold = 30 * 24 * time.Hour
 )
 
+// tlsNextProtos lists the protocols offered through ALPN. HTTP/2 first keeps
+// browsers on one multiplexed connection, with HTTP/1.1 for older clients.
+var tlsNextProtos = []string{"h2", "http/1.1"}
+
 const domainNotConfiguredHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -372,8 +376,6 @@ func (s *Server) Start() error {
 	}
 
 	tlsConfig := s.createTLSConfig()
-	tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-
 	srv := &http.Server{
 		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
@@ -492,13 +494,18 @@ func (s *Server) createTLSConfig() *tls.Config {
 		return nil, fmt.Errorf("no certificate found for domain: %s", domain)
 	}
 
+	// Certificate selection happens per handshake, so the config returned by
+	// GetConfigForClient must repeat the ALPN protocols; otherwise the
+	// per-connection config silently drops HTTP/2 negotiation.
 	return &tls.Config{
+		NextProtos: tlsNextProtos,
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			clientIP := ""
 			if hello.Conn != nil {
 				clientIP = hello.Conn.RemoteAddr().(*net.TCPAddr).IP.String()
 			}
 			return &tls.Config{
+				NextProtos: tlsNextProtos,
 				GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 					return getCert(hello.ServerName, clientIP)
 				},
