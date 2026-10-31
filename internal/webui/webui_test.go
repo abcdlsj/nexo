@@ -405,3 +405,37 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("favicon response = %d %q %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
 }
+
+func TestParseAuthExclude(t *testing.T) {
+	t.Parallel()
+	got := parseAuthExclude(" /manifest.webmanifest , /icon-*.png,, /manifest.webmanifest ")
+	want := []string{"/manifest.webmanifest", "/icon-*.png"}
+	if len(got) != len(want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	}
+
+	if paths := parseAuthExclude("  "); len(paths) != 0 {
+		t.Fatalf("expected empty list, got %#v", paths)
+	}
+}
+
+func TestValidAuthExclude(t *testing.T) {
+	t.Parallel()
+	if !validAuthExclude(nil) {
+		t.Fatal("empty list should be valid")
+	}
+	if !validAuthExclude([]string{"/manifest.webmanifest", "/icon-*.png"}) {
+		t.Fatal("absolute paths should be valid")
+	}
+	if validAuthExclude([]string{"manifest.webmanifest"}) {
+		t.Fatal("relative path should be invalid")
+	}
+	if validAuthExclude([]string{"//evil.example.com"}) {
+		t.Fatal("protocol relative path should be invalid")
+	}
+}

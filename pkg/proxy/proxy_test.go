@@ -256,3 +256,45 @@ func TestConfigChanged(t *testing.T) {
 		t.Fatal("equivalent effective response_header_timeout reported as changed")
 	}
 }
+
+func TestAuthExcludeYAML(t *testing.T) {
+	t.Parallel()
+	raw := []byte("upstream: http://127.0.0.1:8080\nauth: true\nauth_exclude:\n  - /manifest.webmanifest\n  - /icon-*.png\n")
+	var cfg Config
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AuthExclude) != 2 {
+		t.Fatalf("unexpected auth_exclude: %#v", cfg.AuthExclude)
+	}
+}
+
+func TestIsAuthExcluded(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		exclude  []string
+		path     string
+		expected bool
+	}{
+		{name: "nil config list", path: "/manifest.webmanifest", expected: false},
+		{name: "exact match", exclude: []string{"/manifest.webmanifest"}, path: "/manifest.webmanifest", expected: true},
+		{name: "exact no partial", exclude: []string{"/feed"}, path: "/feedback", expected: false},
+		{name: "glob prefix", exclude: []string{"/icon-*.png"}, path: "/icon-192.png", expected: true},
+		{name: "glob prefix miss", exclude: []string{"/icon-*.png"}, path: "/apple-touch-icon.png", expected: false},
+		{name: "dir prefix", exclude: []string{"/static/*"}, path: "/static/app.css", expected: true},
+		{name: "invalid pattern ignored", exclude: []string{"manifest.webmanifest"}, path: "/manifest.webmanifest", expected: false},
+		{name: "blank ignored", exclude: []string{"   "}, path: "/", expected: false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{Auth: true, AuthExclude: tc.exclude}
+			if got := cfg.IsAuthExcluded(tc.path); got != tc.expected {
+				t.Fatalf("IsAuthExcluded(%q) = %v, want %v", tc.path, got, tc.expected)
+			}
+		})
+	}
+}
