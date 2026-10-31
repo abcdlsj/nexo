@@ -30,6 +30,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/traffic"
 	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
+	"golang.org/x/net/http2"
 	"gopkg.in/yaml.v3"
 )
 
@@ -45,7 +46,7 @@ const (
 	certRetryDelay    = 24 * time.Hour
 
 	// Request limits
-	maxRequestSize    = 10 << 20 // 10MB
+	maxRequestSize    = 10 << 20 // 10MB default, configurable via max_request_body
 	maxHeaderSize     = 1 << 20  // 1MB
 	keepAliveDuration = 3 * time.Minute
 
@@ -347,6 +348,15 @@ func (s *Server) config() *config.Config {
 	return s.cfg.Load()
 }
 
+// maxRequestBody resolves the configured request body cap, falling back to the
+// historical 10MB limit when the setting is absent or invalid.
+func maxRequestBody(cfg *config.Config) int64 {
+	if cfg == nil {
+		return maxRequestSize
+	}
+	return proxy.ParseByteSize(cfg.MaxRequestBody, maxRequestSize)
+}
+
 // Start starts the HTTPS server and WebUI
 func (s *Server) Start() error {
 	if err := s.setupConfigWatcher(); err != nil {
@@ -361,18 +371,27 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
 
+	tlsConfig := s.createTLSConfig()
+	tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+
 	srv := &http.Server{
 		Addr:              ":443",
 		Handler:           s.handleHTTPS(),
-		ReadTimeout:       readTimeout,
+		ReadTimeout:       proxy.ParseDuration(s.config().ReadTimeout, readTimeout),
 		WriteTimeout:      proxy.ParseDuration(s.config().WriteTimeout, 0),
 		IdleTimeout:       idleTimeout,
 		ReadHeaderTimeout: readHeaderTimeout,
 		MaxHeaderBytes:    maxHeaderSize,
-		TLSConfig:         s.createTLSConfig(),
+		TLSConfig:         tlsConfig,
 	}
 
-	ln, err := s.createListener()
+	// Negotiate HTTP/2 through ALPN. Streams benefit from multiplexing and the
+	// transport keeps SSE working because the write deadline stays per stream.
+	if err := http2.ConfigureServer(srv, &http2.Server{}); err != nil {
+		return fmt.Errorf("failed to configure HTTP/2: %v", err)
+	}
+
+	ln, err := s.createListener(tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -566,13 +585,13 @@ func (s *Server) createSelfSignedCert(domain, certPath, keyPath string) (*tls.Ce
 	return &cert, nil
 }
 
-func (s *Server) createListener() (net.Listener, error) {
+func (s *Server) createListener(tlsConfig *tls.Config) (net.Listener, error) {
 	ln, err := net.Listen("tcp", ":443")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create listener: %v", err)
 	}
 
-	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, s.createTLSConfig())
+	tlsListener := tls.NewListener(tcpKeepAliveListener{ln.(*net.TCPListener)}, tlsConfig)
 	return tlsListener, nil
 }
 
@@ -598,7 +617,7 @@ func (s *Server) handleHTTPS() http.Handler {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody(s.config()))
 
 		host := s.extractHost(r)
 		if host == "" {

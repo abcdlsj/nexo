@@ -90,6 +90,35 @@ func TestParseDurationSetting(t *testing.T) {
 	}
 }
 
+func TestParseByteSizeSetting(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		raw      string
+		fallback int64
+		want     int64
+	}{
+		{name: "empty uses fallback", raw: "", fallback: 10 << 20, want: 10 << 20},
+		{name: "megabytes", raw: "100MB", fallback: 10 << 20, want: 100 << 20},
+		{name: "lowercase", raw: "100mb", fallback: 10 << 20, want: 100 << 20},
+		{name: "gigabytes", raw: "2GB", fallback: 10 << 20, want: 2 << 30},
+		{name: "kilobytes", raw: "512KB", fallback: 10 << 20, want: 512 << 10},
+		{name: "raw bytes", raw: "1048576", fallback: 10 << 20, want: 1 << 20},
+		{name: "fractional", raw: "1.5MB", fallback: 10 << 20, want: 1572864},
+		{name: "invalid falls back", raw: "lots", fallback: 10 << 20, want: 10 << 20},
+		{name: "zero falls back", raw: "0MB", fallback: 10 << 20, want: 10 << 20},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ParseByteSize(tc.raw, tc.fallback); got != tc.want {
+				t.Fatalf("ParseByteSize(%q) = %d, want %d", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResponseHeaderTimeout(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

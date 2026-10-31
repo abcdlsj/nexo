@@ -6,6 +6,8 @@ staging: false                    # Set to true to use Let's Encrypt staging env
 base_dir: /etc/nexo               # Base directory for nexo data
 cert_dir: /etc/nexo/certs         # Certificate storage directory
 # response_header_timeout: 300s   # Global default for upstream header wait; "0" waits indefinitely
+# max_request_body: 10MB          # Global request body cap; accepts KB/MB/GB or a raw byte count
+# read_timeout: 30s               # Global cap for reading a request (headers plus body)
 
 # Cloudflare DNS API configuration (required for DNS-01 challenge)
 cloudflare:
