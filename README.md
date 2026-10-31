@@ -10,6 +10,7 @@ Nexo maps domains to upstream services or HTTPS redirects, obtains certificates 
 
 - **Automatic HTTPS** — individual and wildcard certificates through Let's Encrypt and Cloudflare DNS-01.
 - **Simple routing** — reverse proxy or redirect configuration in one YAML file.
+- **HTTP/1.1 and HTTP/2** — both negotiated over ALPN, with streaming responses left uncapped.
 - **Operational UI** — routes, certificate health, traffic telemetry, and security settings.
 - **Optional GitHub OAuth** — per-route access control with an explicit user allowlist.
 - **Secure defaults** — loopback-only management UI, CSRF protection, login throttling, strict cookies, security headers, and protected secret storage.
@@ -157,6 +158,24 @@ proxies:
   methods and never re-sends POST/PUT/PATCH bodies.
 - Avoid `write_timeout` on WebSocket routes; a total write cap is incompatible
   with hijacked long-lived connections.
+
+### Request limits
+
+`max_request_body` caps the request body size accepted from clients, for every
+route. It accepts byte sizes such as `10MB`, `512KB`, or a raw byte count, and
+defaults to 10MB. Raise it when the upstream accepts larger uploads:
+
+```yaml
+max_request_body: 100MB
+```
+
+`read_timeout` caps how long Nexo takes to read a complete request (headers
+plus body); it defaults to `30s`. A large upload on a slow link takes longer
+than 30s to arrive, so widen the window together with the body limit:
+
+```yaml
+read_timeout: 10m
+```
 
 ### Tunneled upstreams (gnar)
 

@@ -36,6 +36,17 @@ type Config struct {
 	// response_header_timeout. When neither is set, the historical 30s default
 	// applies.
 	ResponseHeaderTimeout string `mapstructure:"response_header_timeout" yaml:"response_header_timeout,omitempty"`
+
+	// MaxRequestBody caps the request body size accepted from clients for all
+	// routes. Accepts byte sizes such as "10MB", "512KB" or a raw byte count;
+	// empty keeps the 10MB default.
+	MaxRequestBody string `mapstructure:"max_request_body" yaml:"max_request_body,omitempty"`
+
+	// ReadTimeout caps how long the proxy takes to read a complete request
+	// (headers plus body) for all routes. Accepts Go duration strings; empty
+	// keeps the 30s default. Raise it when large uploads travel over slow
+	// links, since the body must arrive within this window.
+	ReadTimeout string `mapstructure:"read_timeout" yaml:"read_timeout,omitempty"`
 }
 
 // IsIPBlocked checks exact IPs and CIDR ranges from the security blacklist.
@@ -114,6 +125,8 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("cloudflare:api_token", "")
 	v.SetDefault("wildcards", []string{})
 	v.SetDefault("proxies", map[string]any{})
+	v.SetDefault("max_request_body", "10MB")
+	v.SetDefault("read_timeout", "30s")
 
 	// Determine config directory
 	configDir := "/etc/nexo"

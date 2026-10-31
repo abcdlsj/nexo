@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,42 @@ func ParseDuration(raw string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// ParseByteSize parses a byte size such as "10MB", "512KB" or a raw byte
+// count. Empty values produce the fallback. Invalid values log a warning and
+// fall back instead of failing the whole proxy.
+func ParseByteSize(raw string, fallback int64) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+
+	upper := strings.ToUpper(raw)
+	multiplier := int64(1)
+	for _, unit := range []struct {
+		suffix string
+		factor int64
+	}{
+		{"TB", 1 << 40}, {"T", 1 << 40},
+		{"GB", 1 << 30}, {"G", 1 << 30},
+		{"MB", 1 << 20}, {"M", 1 << 20},
+		{"KB", 1 << 10}, {"K", 1 << 10},
+		{"B", 1},
+	} {
+		if strings.HasSuffix(upper, unit.suffix) {
+			multiplier = unit.factor
+			upper = strings.TrimSpace(strings.TrimSuffix(upper, unit.suffix))
+			break
+		}
+	}
+
+	value, err := strconv.ParseFloat(upper, 64)
+	if err != nil || value <= 0 {
+		log.Warn("Invalid byte size setting; using fallback", "value", raw, "fallback", fallback, "err", err)
+		return fallback
+	}
+	return int64(value * float64(multiplier))
 }
 
 // resolveResponseHeaderTimeout applies the route override first and falls back
