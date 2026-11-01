@@ -200,11 +200,10 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.config()
 	discoveries := h.discoverRoutes(r.Context())
 	data := DashboardData{
 		PageData: h.newPageData(r, "dashboard"),
-		Routes:   buildRouteViewsWithDiscovery(cfg.Proxies, discoveries),
+		Routes:   buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
 	}
 
 	for _, route := range data.Routes {
@@ -222,6 +221,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 type ProxiesData struct {
 	PageData
 	Proxies      map[string]*proxy.Config
+	DockerRoutes map[string]DynamicRoute
 	CreateEditor RouteEditorData
 	EditEditor   *RouteEditorData
 	Message      string
@@ -293,6 +293,7 @@ func (h *Handler) handleProxies(w http.ResponseWriter, r *http.Request) {
 	data := ProxiesData{
 		PageData:     pageData,
 		Proxies:      cfg.Proxies,
+		DockerRoutes: h.dynamicRoutes(),
 		CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: csrfToken, Form: newRouteFormData("", nil)},
 		EditEditor:   editEditor,
 		Message:      r.URL.Query().Get("message"),

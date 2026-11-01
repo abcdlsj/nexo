@@ -439,3 +439,46 @@ func TestValidAuthExclude(t *testing.T) {
 		t.Fatal("protocol relative path should be invalid")
 	}
 }
+
+func TestDynamicRoutesMerge(t *testing.T) {
+	t.Parallel()
+	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{
+		"static.example.com": {Upstream: "http://127.0.0.1:9000"},
+		"both.example.com":   {Upstream: "http://127.0.0.1:9100"},
+	}}, "", nil)}
+	handler.SetDynamicRoutes(func() map[string]DynamicRoute {
+		return map[string]DynamicRoute{
+			"discovered.example.com": {Upstream: "http://172.18.0.4:8080", Container: "api"},
+			"both.example.com":       {Upstream: "http://172.18.0.9:8080", Container: "api"},
+		}
+	})
+
+	routes := handler.allRoutes()
+	if len(routes) != 3 {
+		t.Fatalf("merged route count = %d, want 3", len(routes))
+	}
+	if got := routes["both.example.com"].Upstream; got != "http://127.0.0.1:9100" {
+		t.Fatalf("static route did not win the conflict: %q", got)
+	}
+	if cfg, ok := handler.routeConfig("discovered.example.com"); !ok || cfg.Upstream != "http://172.18.0.4:8080" {
+		t.Fatalf("discovered route not resolvable: %+v ok=%v", cfg, ok)
+	}
+}
+
+func TestProxiesPageListsDynamicRoutes(t *testing.T) {
+	t.Parallel()
+	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{}}, "", nil)}
+	handler.SetDynamicRoutes(func() map[string]DynamicRoute {
+		return map[string]DynamicRoute{"api.example.com": {Upstream: "http://172.18.0.4:8080", Container: "api"}}
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/proxies", nil)
+	w := httptest.NewRecorder()
+	handler.handleProxies(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("proxies page returned %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "api.example.com") || !strings.Contains(w.Body.String(), "Docker") {
+		t.Fatalf("dynamic route missing from the proxies page: %s", w.Body.String())
+	}
+}

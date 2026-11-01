@@ -254,6 +254,13 @@ type Server struct {
 	proxies    map[string]*proxy.Handler
 	trafficMgr *traffic.Manager
 
+	// dockerRoutes holds routes discovered from container labels. Static config
+	// always wins for the same domain, so disabling discovery cannot silently
+	// reroute a configured domain.
+	dockerRoutes map[string]*dockerRoute
+	dockerCancel context.CancelFunc
+	dockerSocket string
+
 	failCerts   map[string]time.Time
 	failCertsMu sync.RWMutex
 
@@ -331,14 +338,15 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	trafficMgr := traffic.NewManager(trafficDir)
 
 	s := &Server{
-		ctx:        ctx,
-		cancel:     cancel,
-		certm:      m,
-		authm:      authm,
-		proxies:    make(map[string]*proxy.Handler),
-		trafficMgr: trafficMgr,
-		failCerts:  make(map[string]time.Time),
-		cfgPath:    cfgPath,
+		ctx:          ctx,
+		cancel:       cancel,
+		certm:        m,
+		authm:        authm,
+		proxies:      make(map[string]*proxy.Handler),
+		dockerRoutes: make(map[string]*dockerRoute),
+		trafficMgr:   trafficMgr,
+		failCerts:    make(map[string]time.Time),
+		cfgPath:      cfgPath,
 	}
 	s.cfg.Store(cfg)
 
@@ -375,6 +383,8 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to load proxy configs: %v", err)
 	}
 
+	s.syncDockerWatcher(s.config())
+
 	tlsConfig := s.createTLSConfig()
 	srv := &http.Server{
 		Addr:              ":443",
@@ -407,6 +417,8 @@ func (s *Server) startWebUI() {
 	webuiHandler := webui.New(cfg, s.cfgPath, s.certm, s.authm, func() error {
 		return s.Reload()
 	}, s.trafficMgr)
+	webuiHandler.SetDynamicRoutes(s.dynamicWebRoutes)
+
 	s.mu.Lock()
 	s.webuiHandler = webuiHandler
 	s.mu.Unlock()
@@ -463,8 +475,8 @@ func (s *Server) createTLSConfig() *tls.Config {
 			return nil, fmt.Errorf("empty domain")
 		}
 
-		// Check if domain is configured
-		if _, configured := cfg.Proxies[domain]; !configured {
+		// Check if domain is configured, either statically or by a container
+		if !s.hasRoute(domain) {
 			if _, wildcard := cfg.GetWildcardDomain(domain); !wildcard {
 				log.Warn("TLS request for unconfigured domain", "ip", clientIP, "domain", domain)
 				return nil, fmt.Errorf("domain not configured: %s", domain)
@@ -610,6 +622,7 @@ func (s *Server) Stop() {
 	if s.trafficMgr != nil {
 		s.trafficMgr.Stop()
 	}
+	s.stopDockerWatcher()
 	if s.cancel != nil {
 		s.cancel()
 	}
@@ -729,6 +742,10 @@ func (s *Server) findHandlerWithConfig(host string) (*proxy.Handler, *proxy.Conf
 
 	if ok {
 		return h, cfg.Proxies[host]
+	}
+
+	if route, ok := s.dockerRoute(host); ok {
+		return route.handler, route.cfg
 	}
 
 	if wild, ok := cfg.GetWildcardDomain(host); ok {
@@ -933,12 +950,7 @@ func (s *Server) renewCerts() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.mu.RLock()
-			ds := make([]string, 0, len(s.proxies))
-			for d := range s.proxies {
-				ds = append(ds, d)
-			}
-			s.mu.RUnlock()
+			ds := s.routeDomains()
 
 			for _, d := range ds {
 				s.handleCertObtain(d, false)
@@ -1063,13 +1075,12 @@ func (s *Server) Reload() error {
 		return fmt.Errorf("failed to load proxies: %v", err)
 	}
 
+	// Start, stop, or repoint container discovery when its settings changed.
+	s.syncDockerWatcher(newCfg)
+
 	// Update auth manager's allowed hosts if auth is enabled
 	if s.authm != nil {
-		allowedHosts := make([]string, 0, len(newCfg.Proxies))
-		for domain := range newCfg.Proxies {
-			allowedHosts = append(allowedHosts, domain)
-		}
-		s.authm.UpdateAllowedHosts(allowedHosts)
+		s.refreshAuthHosts()
 
 		// Also update secret key if it changed
 		if newCfg.Auth.SecretKey != "" {

@@ -10,6 +10,7 @@ Nexo maps domains to upstream services or HTTPS redirects, obtains certificates 
 
 - **Automatic HTTPS** — individual and wildcard certificates through Let's Encrypt and Cloudflare DNS-01.
 - **Simple routing** — reverse proxy or redirect configuration in one YAML file.
+- **Container discovery** — one Docker label publishes a route, no config edit.
 - **HTTP/1.1 and HTTP/2** — both negotiated over ALPN, with streaming responses left uncapped.
 - **Operational UI** — routes, certificate health, traffic telemetry, and security settings.
 - **Optional GitHub OAuth** — per-route access control with an explicit user allowlist.
@@ -125,6 +126,55 @@ docker run --rm \
 ```
 
 Inside a container, set `webui.host: 0.0.0.0` so the published loopback port can reach the process. Always configure a bcrypt password and keep the Web UI behind a trusted HTTPS gateway, SSH tunnel, or private network.
+
+### Routes from container labels
+
+Let containers declare their own routes instead of editing the config file:
+
+```yaml
+docker:
+  enabled: true
+  socket: /var/run/docker.sock  # default
+  host: 127.0.0.1               # prefix used for published host ports
+```
+
+The daemon socket must be readable by the Nexo process. Point `docker.socket` at
+non-standard paths such as `~/.orbstack/run/docker.sock` or
+`~/.colima/default/docker.sock` when the runtime does not use the default.
+
+```bash
+docker run --rm --name nexo \
+  -p 443:443 -p 127.0.0.1:8080:8080 \
+  -v /etc/nexo:/etc/nexo \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  nexo server --config /etc/nexo/config.yaml
+```
+
+Then one label is enough:
+
+```bash
+docker run -d --name api --label nexo.domain=api.example.com my-api:latest
+```
+
+| Label | Default | Meaning |
+| --- | --- | --- |
+| `nexo.domain` | required | Domain(s) to serve; comma-separated for several |
+| `nexo.port` | inferred | Container port; inferred when exactly one TCP port is exposed |
+| `nexo.upstream` | inferred | Full upstream URL, used verbatim |
+| `nexo.network` | first attached | Docker network to read the container IP from |
+| `nexo.auth` | `false` | Require GitHub OAuth, like `auth: true` |
+
+The upstream is picked from the first available source: `nexo.upstream`, then the
+container IP, then a published host port on `docker.host`, then the container
+name (resolvable between containers on the same user-defined network).
+
+- A domain that also exists in `proxies` keeps its config-file definition; the
+  container route is skipped and a warning is logged.
+- Routes follow the container: `docker stop` removes the route, `docker start`
+  restores it, and a changed port or domain is applied without a restart.
+- Certificates are obtained the same way as for configured routes, so a
+  matching wildcard keeps discovery free of new certificate orders.
+- Discovered routes appear read-only in the Web UI.
 
 ## Routing
 

@@ -8,7 +8,7 @@
       <div class="composer-body">{{template "route_form" .CreateEditor}}</div>
     </details>
 
-    {{if eq (len .Proxies) 0}}
+    {{if and (eq (len .Proxies) 0) (eq (len .DockerRoutes) 0)}}
     <div class="empty-state">No routes configured.</div>
     {{else}}
     <div class="proxy-list" id="route-list">
@@ -42,6 +42,24 @@
           {{template "route_form" $.EditEditor}}
         </div>
         {{end}}{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{if .DockerRoutes}}
+    <div class="proxy-list" id="docker-route-list">
+      {{range $domain, $route := .DockerRoutes}}
+      <div class="proxy-entry">
+        <div class="proxy-item">
+          <div class="proxy-info">
+            <div class="proxy-domain">
+              {{$domain}}
+              <span class="proxy-type-badge proxy">Docker</span>
+            </div>
+            <div class="proxy-target">→ {{$route.Upstream}}{{if $route.Container}} · {{$route.Container}}{{end}}</div>
+          </div>
+        </div>
       </div>
       {{end}}
     </div>

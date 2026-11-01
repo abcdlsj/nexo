@@ -29,6 +29,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
 	"github.com/abcdlsj/nexo/pkg/config"
+	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/abcdlsj/nexo/pkg/traffic"
 	"github.com/charmbracelet/log"
 	"golang.org/x/crypto/bcrypt"
@@ -64,6 +65,15 @@ type loginAttempt struct {
 	lockedUntil *time.Time
 }
 
+// DynamicRoute is a route discovered outside the config file, such as one
+// derived from Docker labels. It is read-only in the Web UI: the container, not
+// the config file, owns it.
+
+type DynamicRoute struct {
+	Upstream  string
+	Container string
+}
+
 type Handler struct {
 	configs        *configStore
 	certMgr        *cert.Manager
@@ -73,6 +83,50 @@ type Handler struct {
 	loginMu        sync.RWMutex
 	trafficMgr     *traffic.Manager
 	routeDiscovery *routeDiscoverer
+	dynamic        func() map[string]DynamicRoute
+}
+
+// SetDynamicRoutes installs the provider for routes discovered outside the
+// config file. Call it before the handler starts serving.
+func (h *Handler) SetDynamicRoutes(provider func() map[string]DynamicRoute) {
+	if h == nil {
+		return
+	}
+	h.dynamic = provider
+}
+
+func (h *Handler) dynamicRoutes() map[string]DynamicRoute {
+	if h == nil || h.dynamic == nil {
+		return nil
+	}
+	return h.dynamic()
+}
+
+// routeConfig resolves a domain to its route config, preferring the config file
+// so a static route always wins over a discovered one.
+func (h *Handler) routeConfig(domain string) (*proxy.Config, bool) {
+	if cfg, ok := h.config().Proxies[domain]; ok && cfg != nil {
+		return cfg, true
+	}
+	if route, ok := h.dynamicRoutes()[domain]; ok {
+		return &proxy.Config{Upstream: route.Upstream}, true
+	}
+	return nil, false
+}
+
+// allRoutes is the merged view of static and discovered routes.
+func (h *Handler) allRoutes() map[string]*proxy.Config {
+	routes := make(map[string]*proxy.Config)
+	for domain, route := range h.dynamicRoutes() {
+		if route.Upstream == "" {
+			continue
+		}
+		routes[domain] = &proxy.Config{Upstream: route.Upstream}
+	}
+	for domain, cfg := range h.config().Proxies {
+		routes[domain] = cfg
+	}
+	return routes
 }
 
 func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, onChange func() error, trafficMgr *traffic.Manager) *Handler {
@@ -670,6 +724,9 @@ func (h *Handler) getCertInfo(cfg *config.Config) []CertInfo {
 
 	domains := make(map[string]bool)
 	for domain := range cfg.Proxies {
+		domains[domain] = true
+	}
+	for domain := range h.dynamicRoutes() {
 		domains[domain] = true
 	}
 	for _, w := range cfg.Wildcards {
