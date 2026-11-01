@@ -112,15 +112,15 @@ func (h *Handler) discoverRoutes(parent context.Context) map[string]routeDiscove
 	if h == nil || h.routeDiscovery == nil {
 		return nil
 	}
-	cfgSnapshot := h.config()
+	routes := h.allRoutes()
 	ctx, cancel := context.WithTimeout(parent, routeDiscoveryTimeout)
 	defer cancel()
 
-	results := make(map[string]routeDiscoveryResult, len(cfgSnapshot.Proxies))
+	results := make(map[string]routeDiscoveryResult, len(routes))
 	var mu sync.Mutex
 	var wait sync.WaitGroup
 	semaphore := make(chan struct{}, 8)
-	for domain, cfg := range cfgSnapshot.Proxies {
+	for domain, cfg := range routes {
 		if cfg == nil || cfg.Upstream == "" || (cfg.Portal != nil && cfg.Portal.Hidden) {
 			continue
 		}
@@ -153,7 +153,7 @@ func (h *Handler) handleRouteIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
-	cfg, ok := h.config().Proxies[domain]
+	cfg, ok := h.routeConfig(domain)
 	if !ok || cfg == nil || cfg.Upstream == "" || (cfg.Portal != nil && cfg.Portal.Hidden) {
 		http.NotFound(w, r)
 		return

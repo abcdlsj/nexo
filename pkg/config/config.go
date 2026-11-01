@@ -18,6 +18,7 @@ type Config struct {
 	Cloudflare CloudflareConfig         `mapstructure:"cloudflare" yaml:"cloudflare"`
 	Wildcards  []string                 `mapstructure:"wildcards" yaml:"wildcards"` // Wildcard domains (e.g. *.example.com)
 	Proxies    map[string]*proxy.Config `mapstructure:"proxies" yaml:"proxies"`
+	Docker     DockerConfig             `mapstructure:"docker" yaml:"docker,omitempty"`
 	BaseDir    string                   `mapstructure:"base_dir" yaml:"base_dir"`
 	CertDir    string                   `mapstructure:"cert_dir" yaml:"cert_dir"`
 	WebUI      WebUIConfig              `mapstructure:"webui" yaml:"webui,omitempty"`
@@ -65,6 +66,19 @@ func (c *Config) IsIPBlocked(rawIP string) bool {
 		}
 	}
 	return false
+}
+
+// DockerConfig configures container label discovery. When enabled, Nexo reads
+// running containers and turns nexo.* labels into proxy routes, so a service
+// needs no entry in this file.
+type DockerConfig struct {
+	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
+	// Socket is the Docker daemon socket path.
+	Socket string `mapstructure:"socket" yaml:"socket,omitempty"`
+	// Host prefixes upstreams that are only reachable through a published host
+	// port; it must be reachable from the Nexo process (e.g. 127.0.0.1 when Nexo
+	// runs on the same host, the Docker gateway when it runs in a container).
+	Host string `mapstructure:"host" yaml:"host,omitempty"`
 }
 
 // SecurityConfig represents security-related configuration
@@ -125,6 +139,9 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("cloudflare:api_token", "")
 	v.SetDefault("wildcards", []string{})
 	v.SetDefault("proxies", map[string]any{})
+	v.SetDefault("docker:enabled", false)
+	v.SetDefault("docker:socket", "/var/run/docker.sock")
+	v.SetDefault("docker:host", "127.0.0.1")
 	v.SetDefault("max_request_body", "10MB")
 	v.SetDefault("read_timeout", "30s")
 

@@ -84,3 +84,27 @@ func TestAdvancedProxyFieldsViper(t *testing.T) {
 		t.Fatalf("route cache: false not decoded through viper: %+v", route)
 	}
 }
+
+func TestDockerConfigYAML(t *testing.T) {
+	t.Parallel()
+	raw := []byte("docker:\n  enabled: true\n  socket: /run/docker.sock\n  host: 172.17.0.1\n")
+	var cfg Config
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Docker.Enabled || cfg.Docker.Socket != "/run/docker.sock" || cfg.Docker.Host != "172.17.0.1" {
+		t.Fatalf("docker config not decoded: %+v", cfg.Docker)
+	}
+
+	encoded, err := yaml.Marshal(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Config
+	if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Docker != cfg.Docker {
+		t.Fatalf("docker config changed after round trip: %+v", roundTrip.Docker)
+	}
+}

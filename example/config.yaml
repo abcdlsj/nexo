@@ -83,3 +83,16 @@ proxies:
   specific.otherdomain.com:
     upstream: http://localhost:5000
     auth: true
+
+# Docker label discovery (optional)
+# Containers carrying nexo.* labels become routes without an entry above.
+docker:
+  enabled: false
+  socket: /var/run/docker.sock    # Docker daemon socket
+  host: 127.0.0.1                 # prefix for upstreams reached through published host ports
+# Example:
+#   docker run -d --name api \
+#     --label nexo.domain=api.example.com \
+#     --label nexo.port=8080 \
+#     --label nexo.network=my-network \
+#     my-api:latest
