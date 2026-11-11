@@ -4,7 +4,6 @@
 
 Nexo maps domains to upstream services or HTTPS redirects, obtains certificates through Cloudflare DNS-01, and keeps day-to-day operations visible through a self-contained Web UI.
 
-![Nexo fleet view](docs/assets/nexo-dashboard.png)
 
 ## Why Nexo
 

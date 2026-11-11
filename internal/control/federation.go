@@ -532,7 +532,7 @@ func buildWarnings(data *FleetData, seenDomains map[string][]string, stale, offl
 
 func errorMessage(err *APIError) string {
 	if err == nil {
-		return "unknown error"
+		return ""
 	}
 	return err.Message
 }
