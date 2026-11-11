@@ -33,11 +33,21 @@ jobs:
           type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
           type=sha,prefix=dev-,enable=${{ github.ref == 'refs/heads/dev' }}
 
+    - name: Resolve build metadata
+      id: build
+      run: |
+        echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
     - name: Build and push
       uses: docker/build-push-action@v2
       with:
         context: .
         push: true
+        build-args: |
+          VERSION=${{ github.ref_name }}-${{ steps.build.outputs.commit }}
+          COMMIT=${{ steps.build.outputs.commit }}
+          BUILD_DATE=${{ steps.build.outputs.date }}
         build-args: |
           VERSION=${{ github.ref_name }}
           COMMIT=${{ github.sha }}

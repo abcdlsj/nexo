@@ -513,6 +513,22 @@ proxies:
 
 If you expose the Web UI beyond localhost, terminate HTTPS at a trusted gateway and restrict network access. A password over public plain HTTP is still a password sent over public plain HTTP—do not do that.
 
+## Updating a host
+
+Binary hosts (systemd, no container) take a tagged release and keep the previous
+binary for rollback:
+
+```bash
+sudo scripts/nexo-upgrade.sh v0.2.0 --dry-run   # download and verify only
+sudo scripts/nexo-upgrade.sh v0.2.0            # verify, install, restart, check :443
+sudo scripts/nexo-upgrade.sh --rollback        # put nexo.prev back
+```
+
+The script checks `checksums.txt` from the GitHub release, refuses a binary whose
+`nexo version` does not run, and rolls back if the unit fails to come back with
+443 listening. Docker hosts pull the tag instead:
+`docker pull ghcr.io/abcdlsj/nexo:v0.2.0`.
+
 ## Development
 
 ```bash
