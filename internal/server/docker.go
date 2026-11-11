@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/abcdlsj/nexo/internal/control"
 	"github.com/abcdlsj/nexo/internal/webui"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/docker"
@@ -93,6 +94,19 @@ func (s *Server) dynamicWebRoutes() map[string]webui.DynamicRoute {
 	routes := make(map[string]webui.DynamicRoute, len(s.dockerRoutes))
 	for domain, route := range s.dockerRoutes {
 		routes[domain] = webui.DynamicRoute{Upstream: route.cfg.Upstream, Container: route.container}
+	}
+	return routes
+}
+
+// dynamicControlRoutes exposes discovered routes to the control plane without
+// leaking the Web UI types across the boundary.
+func (s *Server) dynamicControlRoutes() map[string]control.DiscoveredRoute {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	routes := make(map[string]control.DiscoveredRoute, len(s.dockerRoutes))
+	for domain, route := range s.dockerRoutes {
+		routes[domain] = control.DiscoveredRoute{Upstream: route.cfg.Upstream, Container: route.container}
 	}
 	return routes
 }

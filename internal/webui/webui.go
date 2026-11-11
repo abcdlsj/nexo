@@ -6,12 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/x509"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"html/template"
@@ -54,6 +52,12 @@ var (
 
 	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"hasPrefix": strings.HasPrefix,
+		"short": func(value string) string {
+			if len(value) <= 10 {
+				return value
+			}
+			return value[:10]
+		},
 	}).ParseFS(tmplFS, "tmpl/*.html"))
 )
 
@@ -84,6 +88,7 @@ type Handler struct {
 	trafficMgr     *traffic.Manager
 	routeDiscovery *routeDiscoverer
 	dynamic        func() map[string]DynamicRoute
+	fleet          FleetProvider
 }
 
 // SetDynamicRoutes installs the provider for routes discovered outside the
@@ -201,6 +206,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/config/wildcard/delete", protected(h.handleDeleteWildcard))
 	mux.HandleFunc("/config/secret-key/regenerate", protected(h.handleRegenerateSecretKey))
 	mux.HandleFunc("/config/security/update", protected(h.handleUpdateSecurity))
+
+	// Traffic routes
+	mux.HandleFunc("/fleet", protected(h.handleFleet))
+	mux.HandleFunc("/fleet/node", protected(h.handleFleetNode))
+	mux.HandleFunc("/fleet/route", protected(h.handleFleetRoute))
+	mux.HandleFunc("/fleet/route/save", protected(h.handleFleetRouteSave))
+	mux.HandleFunc("/fleet/route/delete", protected(h.handleFleetRouteDelete))
+	mux.HandleFunc("/fleet/cert/renew", protected(h.handleFleetCertRenew))
+	mux.HandleFunc("/fleet/security/save", protected(h.handleFleetSecuritySave))
 
 	// Traffic routes
 	mux.HandleFunc("/traffic", protected(h.handleTraffic))
@@ -716,113 +730,36 @@ func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getCertInfo(cfg *config.Config) []CertInfo {
-	var certs []CertInfo
-
 	if cfg.CertDir == "" {
-		return certs
+		return nil
 	}
 
-	domains := make(map[string]bool)
+	domains := make([]string, 0, len(cfg.Proxies)+len(cfg.Wildcards))
 	for domain := range cfg.Proxies {
-		domains[domain] = true
+		domains = append(domains, domain)
 	}
 	for domain := range h.dynamicRoutes() {
-		domains[domain] = true
+		domains = append(domains, domain)
 	}
-	for _, w := range cfg.Wildcards {
-		domains[w] = true
-	}
+	slices.Sort(domains)
 
-	for domain := range domains {
-		info := h.getCertForDomain(cfg, domain)
-		if info.Domain != "" {
-			certs = append(certs, info)
+	infos := cert.Inspect(cfg.CertDir, domains, cfg.Wildcards)
+	out := make([]CertInfo, 0, len(infos))
+	for _, info := range infos {
+		view := CertInfo{
+			Domain:         info.Domain,
+			Status:         info.Status,
+			DaysLeft:       info.DaysLeft,
+			Issuer:         info.Issuer,
+			UsesWildcard:   info.UsesWildcard,
+			WildcardDomain: info.WildcardDomain,
 		}
-	}
-
-	return certs
-}
-
-func (h *Handler) getCertForDomain(cfg *config.Config, domain string) CertInfo {
-	info := CertInfo{
-		Domain: domain,
-		Status: "error",
-	}
-
-	// For wildcard domains like *.example.com, look for example.com.crt
-	if strings.HasPrefix(domain, "*.") {
-		baseDomain := domain[2:]
-		certFile := filepath.Join(cfg.CertDir, baseDomain+".crt")
-		keyFile := filepath.Join(cfg.CertDir, baseDomain+".key")
-		return h.readCertInfo(domain, certFile, keyFile)
-	}
-
-	// For regular domains, first try exact match
-	certFile := filepath.Join(cfg.CertDir, domain+".crt")
-	keyFile := filepath.Join(cfg.CertDir, domain+".key")
-	if _, err := os.Stat(certFile); err == nil {
-		return h.readCertInfo(domain, certFile, keyFile)
-	}
-
-	// If no exact match, try wildcard match using config method
-	if wild, ok := cfg.GetWildcardDomain(domain); ok {
-		baseDomain := wild[2:] // Remove "*." prefix
-		certFile = filepath.Join(cfg.CertDir, baseDomain+".crt")
-		keyFile = filepath.Join(cfg.CertDir, baseDomain+".key")
-		if _, err := os.Stat(certFile); err == nil {
-			info = h.readCertInfo(domain, certFile, keyFile)
-			info.UsesWildcard = true
-			info.WildcardDomain = wild
-			return info
+		if !info.NotAfter.IsZero() {
+			view.ExpiryDate = info.NotAfter.Format("2006-01-02")
 		}
+		out = append(out, view)
 	}
-
-	return info
-}
-
-func (h *Handler) readCertInfo(domain, certFile, keyFile string) CertInfo {
-	info := CertInfo{
-		Domain: domain,
-		Status: "error",
-	}
-
-	if _, err := os.Stat(certFile); os.IsNotExist(err) {
-		return info
-	}
-
-	certPEM, err := os.ReadFile(certFile)
-	if err != nil {
-		return info
-	}
-
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		return info
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return info
-	}
-
-	info.Issuer = cert.Issuer.CommonName
-	info.ExpiryDate = cert.NotAfter.Format("2006-01-02")
-	daysLeft := int(time.Until(cert.NotAfter).Hours() / 24)
-	info.DaysLeft = daysLeft
-
-	if daysLeft < 0 {
-		info.Status = "error"
-	} else if daysLeft < 30 {
-		info.Status = "expiring"
-	} else {
-		info.Status = "valid"
-	}
-
-	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
-		info.Status = "error"
-	}
-
-	return info
+	return out
 }
 
 // checkLoginAllowed checks if login is allowed for the IP/username

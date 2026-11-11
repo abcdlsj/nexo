@@ -1,0 +1,214 @@
+{{template "head" .}}
+<body class="app-page">
+  {{template "nav" .}}
+  <style>
+    .fleet-page { display: block; }
+    .fleet-head { min-height: 42px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); }
+    .fleet-head h1 { font-size: 15px; }
+    .fleet-head .fleet-summary { margin-left: auto; color: var(--ink-soft); font-size: 12px; }
+    .fleet-canvas { position: relative; display: grid; gap: 14px; padding: 22px 0 26px; }
+    .fleet-wires { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
+    .fleet-wire { fill: none; stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .fleet-wire.live { stroke: var(--blue); stroke-dasharray: 2 10; opacity: .65; }
+    .fleet-row { position: relative; z-index: 1; display: grid; grid-template-columns: 132px minmax(210px, 268px) minmax(0, 1fr); align-items: start; gap: 30px; }
+    .fleet-origin { min-height: 1px; padding-top: 12px; }
+    .fleet-internet { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line-soft); background: var(--paper); font-size: 12px; }
+    .fleet-internet b { font-size: 13px; }
+    .fleet-internet span { color: var(--ink-soft); font: 11px/1.4 var(--mono-font); }
+    .fleet-node { padding: 10px 12px; border: 1px solid var(--line-soft); border-left: 3px solid var(--line-soft); background: var(--paper); }
+    .fleet-node.state-local, .fleet-node.state-fresh { border-left-color: var(--green); }
+    .fleet-node.state-stale { border-left-color: var(--yellow); }
+    .fleet-node.state-offline, .fleet-node.state-identity_mismatch, .fleet-node.state-misconfigured { border-left-color: var(--coral); }
+    .fleet-node-head { display: flex; align-items: center; gap: 8px; }
+    .fleet-node-name { color: var(--ink); font-size: 13px; font-weight: 700; text-decoration: none; }
+    .fleet-node-name:hover { color: var(--blue); }
+    .fleet-state { margin-left: auto; padding: 0 5px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 10px/1.6 var(--mono-font); text-transform: uppercase; }
+    .fleet-state.fresh, .fleet-state.local { color: var(--green); border-color: var(--green); }
+    .fleet-state.stale { color: #9a6b00; border-color: var(--yellow); }
+    .fleet-state.offline, .fleet-state.identity_mismatch, .fleet-state.misconfigured { color: var(--coral); border-color: var(--coral); }
+    .fleet-meta { margin-top: 4px; overflow: hidden; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); text-overflow: ellipsis; }
+    .fleet-meta .warn { color: var(--coral); }
+    .fleet-leaves { display: grid; gap: 4px; }
+    .fleet-leaf { display: grid; grid-template-columns: minmax(160px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
+    .fleet-leaf:hover { border-color: var(--line-soft); background: var(--blue-soft); text-decoration: none; }
+    .fleet-leaf-host { overflow: hidden; font: 12px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
+    .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 11px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
+    .fleet-leaf-tags { display: flex; gap: 4px; }
+    .fleet-leaf-tags i { padding: 0 4px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 10px/1.5 var(--mono-font); font-style: normal; text-transform: uppercase; }
+    .fleet-leaf-tags i.bad { color: var(--coral); border-color: var(--coral); }
+    .fleet-empty { padding: 10px; color: var(--ink-soft); font-size: 12px; }
+    .fleet-section { margin-top: 26px; }
+    .fleet-section > h2 { margin-bottom: 8px; font-size: 14px; }
+    .fleet-warnings { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .fleet-warnings li { padding: 7px 10px; border-left: 3px solid var(--yellow); background: var(--wash); font-size: 12px; }
+    .fleet-warnings code { margin-right: 8px; background: transparent; border: 0; color: var(--ink-soft); }
+    .fleet-links { display: grid; gap: 4px; }
+    .fleet-link { display: grid; grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) auto; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); font: 12px/1.4 var(--mono-font); }
+    .fleet-link .state { color: var(--ink-soft); text-transform: uppercase; font-size: 10px; }
+    .fleet-link .state.connected { color: var(--green); }
+    .fleet-link .state.unknown_endpoint { color: var(--coral); }
+    .fleet-hint { max-width: 70ch; color: var(--ink-soft); font-size: 12px; }
+    .fleet-hint pre { margin-top: 10px; padding: 12px; border: 1px solid var(--line-soft); background: var(--paper); overflow: auto; font: 11px/1.6 var(--mono-font); }
+    .fleet-footer { margin-top: 22px; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); }
+    @media (max-width: 900px) {
+      .fleet-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      .fleet-origin, .fleet-wires { display: none; }
+      .fleet-leaf { grid-template-columns: minmax(0, 1fr) auto; }
+      .fleet-leaf-target { display: none; }
+    }
+  </style>
+
+  <main class="container fleet-page">
+    {{if .Notice}}
+    <div class="fleet-head"><h1>Fleet</h1></div>
+    <section class="fleet-section">
+      <p class="fleet-hint">{{.Notice}}</p>
+      <pre>control_plane:
+  enabled: true
+  listen: 100.x.y.z:9090
+  auth:
+    token_file: /etc/nexo/control-token
+    write_token_file: /etc/nexo/control-write-token
+  coordinator:
+    enabled: true
+    peers:
+      - id: nexo-hk-01
+        url: http://10.0.0.12:9090
+        token_file: /etc/nexo/peers/nexo-hk-01.read
+        write_token_file: /etc/nexo/peers/nexo-hk-01.write</pre>
+    </section>
+    {{else if .View}}
+    <div class="fleet-head">
+      <h1>Fleet</h1>
+      <p class="fleet-summary">{{.View.Totals.Nodes}} nodes · {{.View.Totals.Online}} online · {{.View.Totals.Routes}} routes · {{.View.Totals.Requests}} requests{{if .View.Totals.Expiring}} · {{.View.Totals.Expiring}} certs expiring{{end}}</p>
+    </div>
+
+    <div class="fleet-canvas" id="fleet-canvas">
+      <svg class="fleet-wires" id="fleet-wires" aria-hidden="true"></svg>
+      {{range $i, $n := .View.Nodes}}
+      <div class="fleet-row" data-node-index="{{$i}}">
+        <div class="fleet-origin">
+          {{if eq $i 0}}
+          <div class="fleet-internet" id="fleet-internet"><b>Internet</b><span>HTTPS :443</span></div>
+          {{end}}
+        </div>
+        <div class="fleet-node state-{{$n.State}}" id="fleet-node-{{$i}}">
+          <div class="fleet-node-head">
+            <a class="fleet-node-name" href="/fleet/node?id={{$n.ID}}">{{if $n.Name}}{{$n.Name}}{{else}}{{$n.ID}}{{end}}</a>
+            <span class="fleet-state {{$n.State}}">{{$n.State}}</span>
+          </div>
+          <div class="fleet-meta">{{short $n.ID}} · v{{$n.Version}}{{if $n.Uptime}} · up {{$n.Uptime}}{{end}}{{if ne $n.Latency "—"}} · {{$n.Latency}}{{end}}</div>
+          <div class="fleet-meta">{{len $n.Routes}} routes · {{$n.Requests}} req{{if $n.CertExpiring}} · <span class="warn">{{$n.CertExpiring}} cert expiring</span>{{end}}{{if $n.Error}} · <span class="warn">{{$n.Error}}</span>{{end}}</div>
+          {{if $n.ID}}<div class="fleet-meta"><a href="/fleet/route?node={{$n.ID}}">＋ add route</a></div>{{end}}
+        </div>
+        <div class="fleet-leaves">
+          {{range $j, $r := $n.Routes}}
+          <a class="fleet-leaf" id="fleet-leaf-{{$i}}-{{$j}}" data-node-index="{{$i}}" href="/fleet/route?node={{$n.ID}}&host={{$r.Host}}">
+            <span class="fleet-leaf-host">{{$r.Host}}</span>
+            <span class="fleet-leaf-target">{{$r.Target}}</span>
+            <span class="fleet-leaf-tags">
+              {{if $r.Auth}}<i>oauth</i>{{end}}
+              {{if $r.CertMissing}}<i class="bad">no cert</i>{{else if lt $r.CertDays 30}}<i class="bad">cert {{$r.CertDays}}d</i>{{end}}
+              {{if eq $r.Source "docker"}}<i>docker</i>{{end}}
+            </span>
+          </a>
+          {{else}}
+          <div class="fleet-empty">No routes reported</div>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+    </div>
+
+    {{if .View.Warnings}}
+    <section class="fleet-section">
+      <h2>Warnings</h2>
+      <ul class="fleet-warnings">
+        {{range .View.Warnings}}<li><code>{{.Code}}</code>{{.Message}}</li>{{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{if .View.Links}}
+    <section class="fleet-section">
+      <h2>Cross-node links</h2>
+      <div class="fleet-links">
+        {{range .View.Links}}
+        <div class="fleet-link"><span>{{.From}}</span><span class="state {{.State}}">{{.State}}</span><span>{{.To}}</span><span>{{.Relation}}</span></div>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <section class="fleet-section">
+      <h2>Routes</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Node</th><th>Host</th><th>Target</th><th>Policy</th><th>Certificate</th><th></th></tr></thead>
+          <tbody>
+            {{range $n := .View.Nodes}}
+              {{range $r := $n.Routes}}
+              <tr>
+                <td>{{short $n.ID}}</td>
+                <td>{{$r.Host}}</td>
+                <td>{{$r.Target}}</td>
+                <td>{{if $r.Auth}}OAuth{{else}}Public{{end}}</td>
+                <td>{{$r.CertState}}{{if ge $r.CertDays 0}} · {{$r.CertDays}}d{{end}}</td>
+                <td>{{if ne $r.Source "docker"}}<a href="/fleet/route?node={{$n.ID}}&host={{$r.Host}}">Edit</a>{{else}}<span class="text-muted">container</span>{{end}}</td>
+              </tr>
+              {{end}}
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="fleet-footer">Generated {{.View.GeneratedAt}}{{if not .View.Coordinator}} · coordinator disabled, showing local node only{{end}}</p>
+    {{end}}
+  </main>
+
+  <script>
+    (function () {
+      var NS = 'http://www.w3.org/2000/svg';
+      function point(element, side, canvasBox) {
+        var box = element.getBoundingClientRect();
+        return { x: (side === 'right' ? box.right : box.left) - canvasBox.left, y: box.top + box.height / 2 - canvasBox.top };
+      }
+      function connector(from, to) {
+        var middle = from.x + (to.x - from.x) * 0.5;
+        return 'M ' + from.x + ' ' + from.y + ' H ' + middle + ' V ' + to.y + ' H ' + to.x;
+      }
+      function wire(svg, className, d) {
+        var path = document.createElementNS(NS, 'path');
+        path.setAttribute('class', className);
+        path.setAttribute('d', d);
+        svg.appendChild(path);
+      }
+      function draw() {
+        var canvas = document.getElementById('fleet-canvas');
+        var svg = document.getElementById('fleet-wires');
+        if (!canvas || !svg) return;
+        var box = canvas.getBoundingClientRect();
+        svg.setAttribute('viewBox', '0 0 ' + Math.max(canvas.scrollWidth, canvas.clientWidth) + ' ' + Math.max(canvas.scrollHeight, canvas.clientHeight));
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        var internet = document.getElementById('fleet-internet');
+        Array.prototype.forEach.call(document.querySelectorAll('.fleet-row'), function (row) {
+          var node = row.querySelector('.fleet-node');
+          if (!node) return;
+          if (internet) wire(svg, 'fleet-wire live', connector(point(internet, 'right', box), point(node, 'left', box)));
+          Array.prototype.forEach.call(row.querySelectorAll('.fleet-leaf'), function (leaf) {
+            if (leaf.offsetParent === null) return;
+            wire(svg, 'fleet-wire', connector(point(node, 'right', box), point(leaf, 'left', box)));
+          });
+        });
+      }
+      window.addEventListener('resize', draw);
+      if ('ResizeObserver' in window) {
+        var canvas = document.getElementById('fleet-canvas');
+        if (canvas) new ResizeObserver(draw).observe(canvas);
+      }
+      requestAnimationFrame(draw);
+    }());
+  </script>
+</body>
+</html>

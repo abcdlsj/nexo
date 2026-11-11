@@ -1,0 +1,75 @@
+{{template "head" .}}
+<body class="app-page">
+  {{template "nav" .}}
+  <style>
+    .fleet-form-page { max-width: 760px; }
+    .fleet-form-page h1 { margin-bottom: 4px; font-size: 18px; }
+    .fleet-form-page .sub { margin-bottom: 18px; color: var(--ink-soft); font: 12px/1.6 var(--mono-font); }
+    .fleet-form { display: grid; gap: 14px; }
+    .fleet-form label { display: grid; gap: 6px; font: 11px/1.4 var(--mono-font); text-transform: uppercase; color: var(--ink-soft); }
+    .fleet-form input[type="text"], .fleet-form input[type="url"] { min-height: 36px; font-size: 13px; }
+    .fleet-form .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .fleet-form .actions { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+    .fleet-form .actions form { margin: 0; }
+    .fleet-note { padding: 9px 11px; border-left: 3px solid var(--blue); background: var(--wash); color: var(--ink-soft); font-size: 12px; }
+    .fleet-note.bad { border-left-color: var(--coral); color: var(--coral); }
+  </style>
+
+  <main class="container fleet-form-page">
+    <h1>{{if .Host}}Edit route{{else}}Add route{{end}}</h1>
+    <p class="sub">node {{.NodeName}} · {{.NodeState}} · config {{short .ConfigHash}}</p>
+
+    {{if .Error}}<p class="fleet-note bad">{{.Error}}</p>{{end}}
+    {{if not .LocalNode}}<p class="fleet-note">This change is applied on the target node. Its config digest is checked before writing; if the node changed in the meantime the save is rejected.</p>{{end}}
+
+    <form class="fleet-form" method="POST" action="/fleet/route/save">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="node" value="{{.NodeID}}">
+      <input type="hidden" name="if_match" value="{{.ConfigHash}}">
+
+      <label>Host
+        <input type="text" name="host" value="{{.Host}}" {{if .Host}}readonly{{end}} required placeholder="app.example.com">
+      </label>
+
+      <div class="row">
+        <label>Upstream
+          <input type="text" name="upstream" value="{{.Upstream}}" placeholder="http://127.0.0.1:3000">
+        </label>
+        <label>Redirect
+          <input type="text" name="redirect" value="{{.Redirect}}" placeholder="https://example.com">
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Portal name
+          <input type="text" name="portal_name" value="{{.PortalName}}">
+        </label>
+        <label>Portal group
+          <input type="text" name="portal_group" value="{{.PortalGroup}}">
+        </label>
+      </div>
+
+      <label>Auth exclude paths (comma separated)
+        <input type="text" name="auth_exclude" value="{{.AuthExclude}}" placeholder="/manifest.webmanifest, /icon-*.png">
+      </label>
+
+      <label class="switch-row"><input type="checkbox" name="auth" {{if .Auth}}checked{{end}}> Require GitHub OAuth</label>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Save</button>
+        <a class="btn btn-ghost" href="/fleet">Cancel</a>
+      </div>
+    </form>
+
+    {{if .Host}}
+    <form method="POST" action="/fleet/route/delete" onsubmit="return confirm('Delete this route on {{.NodeName}}?')">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="node" value="{{.NodeID}}">
+      <input type="hidden" name="host" value="{{.Host}}">
+      <input type="hidden" name="if_match" value="{{.ConfigHash}}">
+      <button type="submit" class="btn btn-danger btn-sm">Delete route</button>
+    </form>
+    {{end}}
+  </main>
+</body>
+</html>

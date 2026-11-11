@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/abcdlsj/nexo/internal/control"
 	"github.com/abcdlsj/nexo/internal/webui"
 	"github.com/abcdlsj/nexo/pkg/auth"
 	"github.com/abcdlsj/nexo/pkg/cert"
@@ -267,6 +268,8 @@ type Server struct {
 	mu           sync.RWMutex
 	reloadMu     sync.Mutex
 	webuiHandler *webui.Handler
+	controlPlane *control.Server
+	startedAt    time.Time
 
 	watcher *fsnotify.Watcher
 	cfgPath string
@@ -340,6 +343,7 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	s := &Server{
 		ctx:          ctx,
 		cancel:       cancel,
+		startedAt:    time.Now(),
 		certm:        m,
 		authm:        authm,
 		proxies:      make(map[string]*proxy.Handler),
@@ -377,6 +381,10 @@ func (s *Server) Start() error {
 
 	// Start WebUI server first (in background)
 	go s.startWebUI()
+
+	// Start the machine API before the data plane so a coordinator can poll as
+	// soon as this node is serving.
+	s.startControlPlane()
 
 	// Proxy validation is local and does not depend on the WebUI listener.
 	if err := s.loadProxies(false); err != nil {
@@ -418,6 +426,9 @@ func (s *Server) startWebUI() {
 		return s.Reload()
 	}, s.trafficMgr)
 	webuiHandler.SetDynamicRoutes(s.dynamicWebRoutes)
+	if s.controlServer() != nil {
+		webuiHandler.SetFleet(fleetBridge{server: s})
+	}
 
 	s.mu.Lock()
 	s.webuiHandler = webuiHandler
@@ -454,6 +465,97 @@ func (s *Server) startWebUI() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Error("WebUI server error", "err", err)
 	}
+}
+
+// startControlPlane starts the machine-readable control API when enabled. A
+// failure is logged rather than fatal: the data plane must keep serving even if
+// the control address is unavailable.
+func (s *Server) startControlPlane() {
+	cfg := s.config()
+	if !cfg.ControlPlane.Enabled {
+		return
+	}
+
+	ctl, err := control.New(control.Options{
+		Config:     s.config,
+		NodeID:     cfg.ControlPlane.Node.ID,
+		NodeName:   cfg.ControlPlane.Node.Name,
+		Labels:     cfg.ControlPlane.Node.Labels,
+		StartedAt:  s.startedAt,
+		Listen:     cfg.ControlPlane.Listen,
+		BaseDir:    cfg.BaseDir,
+		Discovered: s.dynamicControlRoutes,
+		Traffic:    s.trafficMgr,
+		Mutate:     s.mutateConfig,
+		RenewCert:  s.renewCertificate,
+	})
+	if err != nil {
+		log.Error("Failed to initialize control plane", "err", err)
+		return
+	}
+
+	s.mu.Lock()
+	s.controlPlane = ctl
+	s.mu.Unlock()
+
+	if h := s.webUIHandler(); h != nil {
+		h.SetFleet(fleetBridge{server: s})
+	}
+
+	go func() {
+		if err := ctl.Start(s.ctx); err != nil {
+			log.Error("Control plane stopped", "err", err)
+		}
+	}()
+}
+
+// mutateConfig routes control-plane writes through the Web UI config store, so
+// remote and local edits share one serializer, atomic write, reload and
+// rollback path.
+func (s *Server) mutateConfig(mutate func(*config.Config) error) error {
+	h := s.webUIHandler()
+	if h == nil {
+		return fmt.Errorf("web ui is not ready")
+	}
+	return h.UpdateConfig(mutate)
+}
+
+func (s *Server) renewCertificate(domain string) error {
+	if s.certm == nil {
+		return fmt.Errorf("certificate manager is not available")
+	}
+	return s.certm.ObtainCert(domain)
+}
+
+func (s *Server) webUIHandler() *webui.Handler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.webuiHandler
+}
+
+func (s *Server) controlServer() *control.Server {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.controlPlane
+}
+
+// fleetBridge adapts the control plane to the Web UI fleet provider.
+type fleetBridge struct{ server *Server }
+
+func (b fleetBridge) FleetSnapshot() *control.FleetData {
+	ctl := b.server.controlServer()
+	if ctl == nil {
+		return nil
+	}
+	return ctl.FleetSnapshot()
+}
+
+func (b fleetBridge) FleetCommand(nodeID string, req control.CommandRequest) (*control.CommandResult, error) {
+	ctl := b.server.controlServer()
+	if ctl == nil {
+		return nil, fmt.Errorf("control plane is not enabled")
+	}
+	return ctl.Execute(nodeID, req)
 }
 
 func isLoopbackHost(host string) bool {

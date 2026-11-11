@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/abcdlsj/nexo/internal/buildinfo"
 	"github.com/abcdlsj/nexo/internal/server"
 	"github.com/abcdlsj/nexo/internal/webui"
 	"github.com/abcdlsj/nexo/pkg/config"
@@ -41,6 +42,14 @@ It supports wildcard certificates and configuration through YAML files.`,
 			return webui.StartPreview(previewAddr)
 		},
 	}
+	versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Print version and build information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(buildinfo.String())
+		},
+	}
 )
 
 func runServer(cmd *cobra.Command, args []string) error {
@@ -65,7 +74,7 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/nexo/config.yaml)")
 	previewCmd.Flags().StringVar(&previewAddr, "addr", "127.0.0.1:8088", "loopback address for the preview server")
-	rootCmd.AddCommand(serverCmd, previewCmd)
+	rootCmd.AddCommand(serverCmd, previewCmd, versionCmd)
 }
 
 func main() {

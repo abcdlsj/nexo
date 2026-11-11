@@ -1,8 +1,15 @@
 .PHONY: build run clean test password secret-key
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X github.com/abcdlsj/nexo/internal/buildinfo.Version=$(VERSION) \
+           -X github.com/abcdlsj/nexo/internal/buildinfo.Commit=$(COMMIT) \
+           -X github.com/abcdlsj/nexo/internal/buildinfo.Date=$(BUILD_DATE)
+
 # Build the application
 build:
-	go build -o nexo
+	go build -ldflags "-s -w $(LDFLAGS)" -o nexo
 
 # Run the application
 run: build

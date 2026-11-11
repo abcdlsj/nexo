@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config represents the application configuration
@@ -25,6 +28,11 @@ type Config struct {
 	Auth       AuthConfig               `mapstructure:"auth" yaml:"auth,omitempty"`
 	Security   SecurityConfig           `mapstructure:"security" yaml:"security,omitempty"`
 	Staging    bool                     `mapstructure:"staging" yaml:"staging,omitempty"` // Use Let's Encrypt staging environment
+
+	// ControlPlane exposes the machine-readable control API used by a fleet
+	// coordinator. Disabled by default; enabling it never changes data-plane
+	// routing.
+	ControlPlane ControlPlaneConfig `mapstructure:"control_plane" yaml:"control_plane,omitempty"`
 
 	// WriteTimeout optionally caps the total response write time for all routes.
 	// Accepts Go duration strings (e.g. "2m"); empty or "0" disables the cap.
@@ -48,6 +56,21 @@ type Config struct {
 	// keeps the 30s default. Raise it when large uploads travel over slow
 	// links, since the body must arrive within this window.
 	ReadTimeout string `mapstructure:"read_timeout" yaml:"read_timeout,omitempty"`
+}
+
+// Hash returns a stable digest of the effective configuration. The control
+// plane uses it for optimistic concurrency (If-Match) so a remote write cannot
+// silently overwrite a local edit. Only the digest leaves the process.
+func (c *Config) Hash() string {
+	if c == nil {
+		return ""
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // IsIPBlocked checks exact IPs and CIDR ranges from the security blacklist.
@@ -89,6 +112,76 @@ type SecurityConfig struct {
 	MaxLoginAttempts    int      `mapstructure:"max_login_attempts" yaml:"max_login_attempts,omitempty"`
 	LoginLockoutMinutes int      `mapstructure:"login_lockout_minutes" yaml:"login_lockout_minutes,omitempty"`
 	IPBlacklist         []string `mapstructure:"ip_blacklist" yaml:"ip_blacklist,omitempty"`
+}
+
+// ControlPlaneConfig configures the node control API and, optionally, the
+// coordinator role that observes other Nexo nodes.
+type ControlPlaneConfig struct {
+	Enabled     bool                  `mapstructure:"enabled" yaml:"enabled"`
+	Listen      string                `mapstructure:"listen" yaml:"listen,omitempty"`
+	Node        ControlNodeConfig     `mapstructure:"node" yaml:"node,omitempty"`
+	Auth        ControlAuthConfig     `mapstructure:"auth" yaml:"auth,omitempty"`
+	Coordinator CoordinatorConfig     `mapstructure:"coordinator" yaml:"coordinator,omitempty"`
+	Topology    ControlTopologyConfig `mapstructure:"topology" yaml:"topology,omitempty"`
+}
+
+// ControlNodeConfig carries the stable logical identity of this node. ID is
+// generated once and persisted under base_dir when omitted; it must never be
+// derived from a network address.
+type ControlNodeConfig struct {
+	ID     string            `mapstructure:"id" yaml:"id,omitempty"`
+	Name   string            `mapstructure:"name" yaml:"name,omitempty"`
+	Labels map[string]string `mapstructure:"labels" yaml:"labels,omitempty"`
+}
+
+// ControlAuthConfig points at the node token. The token file is re-read per
+// request so rotation does not need a restart.
+type ControlAuthConfig struct {
+	// TokenFile grants read-only access. Required whenever Listen is not
+	// loopback.
+	TokenFile string `mapstructure:"token_file" yaml:"token_file,omitempty"`
+	// WriteTokenFile grants command execution (route, certificate, security).
+	// Keep it separate so read-only observers never hold write credentials.
+	WriteTokenFile string `mapstructure:"write_token_file" yaml:"write_token_file,omitempty"`
+}
+
+// CoordinatorConfig turns this node into a coordinator that polls the listed
+// peers. Durations accept Go duration strings.
+type CoordinatorConfig struct {
+	Enabled        bool                `mapstructure:"enabled" yaml:"enabled"`
+	PollInterval   string              `mapstructure:"poll_interval" yaml:"poll_interval,omitempty"`
+	RequestTimeout string              `mapstructure:"request_timeout" yaml:"request_timeout,omitempty"`
+	StaleAfter     string              `mapstructure:"stale_after" yaml:"stale_after,omitempty"`
+	Peers          []ControlPeerConfig `mapstructure:"peers" yaml:"peers,omitempty"`
+}
+
+// ControlPeerConfig describes one observed node. Every peer uses its own
+// token: a shared token would make revocation all-or-nothing.
+type ControlPeerConfig struct {
+	ID             string `mapstructure:"id" yaml:"id"`
+	Name           string `mapstructure:"name" yaml:"name,omitempty"`
+	URL            string `mapstructure:"url" yaml:"url"`
+	TokenFile      string `mapstructure:"token_file" yaml:"token_file,omitempty"`
+	WriteTokenFile string `mapstructure:"write_token_file" yaml:"write_token_file,omitempty"`
+}
+
+// ControlTopologyConfig holds explicit cross-node links. Links are display and
+// audit data: they never change how a route forwards traffic.
+type ControlTopologyConfig struct {
+	Links []ControlLinkConfig `mapstructure:"links" yaml:"links,omitempty"`
+}
+
+type ControlLinkConfig struct {
+	ID       string              `mapstructure:"id" yaml:"id"`
+	From     ControlLinkEndpoint `mapstructure:"from" yaml:"from"`
+	To       ControlLinkEndpoint `mapstructure:"to" yaml:"to"`
+	Relation string              `mapstructure:"relation" yaml:"relation,omitempty"`
+	Labels   map[string]string   `mapstructure:"labels" yaml:"labels,omitempty"`
+}
+
+type ControlLinkEndpoint struct {
+	NodeID  string `mapstructure:"node_id" yaml:"node_id"`
+	RouteID string `mapstructure:"route_id" yaml:"route_id,omitempty"`
 }
 
 // AuthConfig represents OAuth authentication configuration
@@ -142,6 +235,12 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("docker:enabled", false)
 	v.SetDefault("docker:socket", "/var/run/docker.sock")
 	v.SetDefault("docker:host", "127.0.0.1")
+	v.SetDefault("control_plane.enabled", false)
+	v.SetDefault("control_plane.listen", "127.0.0.1:9090")
+	v.SetDefault("control_plane.coordinator.enabled", false)
+	v.SetDefault("control_plane.coordinator.poll_interval", "10s")
+	v.SetDefault("control_plane.coordinator.request_timeout", "3s")
+	v.SetDefault("control_plane.coordinator.stale_after", "30s")
 	v.SetDefault("max_request_body", "10MB")
 	v.SetDefault("read_timeout", "30s")
 

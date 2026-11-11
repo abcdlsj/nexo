@@ -13,8 +13,14 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o nexo
+# Build the application with version metadata for fleet version-skew detection
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w \
+    -X github.com/abcdlsj/nexo/internal/buildinfo.Version=${VERSION} \
+    -X github.com/abcdlsj/nexo/internal/buildinfo.Commit=${COMMIT} \
+    -X github.com/abcdlsj/nexo/internal/buildinfo.Date=${BUILD_DATE}" -o nexo
 
 # Final stage
 FROM alpine:3.23

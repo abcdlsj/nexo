@@ -1,6 +1,6 @@
 # RFC 0001：Nexo 多节点控制面与链路视图
 
-- 状态：Draft
+- 状态：Implemented（Phase 1–3；写操作以显式命令 API 落地，见 README「Fleet」）
 - 作者：Nexo maintainers
 - 日期：2026-08-21
 - 目标版本：Control API v1

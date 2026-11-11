@@ -176,6 +176,76 @@ name (resolvable between containers on the same user-defined network).
   matching wildcard keeps discovery free of new certificate orders.
 - Discovered routes appear read-only in the Web UI.
 
+## Fleet view
+
+One node can observe and operate several Nexo nodes without giving up local
+autonomy. Every node stays an independent data plane; the coordinator only polls
+a versioned JSON API and relays explicit commands.
+
+```yaml
+control_plane:
+  enabled: true
+  listen: 10.0.0.11:9090        # tailnet/VPN address for remote peers
+  node:
+    name: nexo-main-01
+  auth:
+    token_file: /etc/nexo/control-token        # read:control
+    write_token_file: /etc/nexo/control-write  # commands
+  coordinator:
+    enabled: true
+    peers:
+      - id: nexo-hk-01
+        url: http://10.0.0.12:9090
+        token_file: /etc/nexo/peers/nexo-hk-01.read
+        write_token_file: /etc/nexo/peers/nexo-hk-01.write
+```
+
+- The coordinator pulls each peer on `poll_interval` (default 10s). Peers never
+  need an inbound rule beyond the control listener, and no peer stores the
+  coordinates of another.
+- A peer that stops answering is shown `stale` after `stale_after`, then
+  `offline` after three failed polls. A peer id mismatch is reported separately
+  instead of being counted as healthy.
+- `control_plane.listen` must be loopback unless `auth.token_file` is set; the
+  process refuses to start otherwise. Keep the listener on a private network
+  (tailnet/VPN) and never reuse the data-plane `:443` listener.
+- Tokens are re-read per request, so rotation needs no restart. Keep read and
+  write tokens separate: a monitoring credential cannot mutate configuration.
+- The node id is generated once and persisted to `<base_dir>/node-id`.
+
+Machine API (`/control/v1`, bearer token, JSON):
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/healthz` | liveness, no authentication |
+| GET | `/node` | identity, version, config digest |
+| GET | `/capabilities` | resources, features, limits |
+| GET | `/snapshot?include=…&recent_limit=…` | one consistent node snapshot |
+| GET | `/resources/{kind}[/{id}]` | routes, certificates, traffic, security, links |
+| GET | `/fleet/snapshot` | coordinator view (local + peers + warnings) |
+| POST | `/commands` | apply `route.upsert`, `route.delete`, `certificate.renew`, `security.update` |
+
+The snapshot never carries API tokens, passwords, key material or upstream
+paths. Traffic aggregates are per node; unique IP counts are explicitly not
+summed across the fleet, and recent records ship a hashed IP without path or
+user agent.
+
+### Making changes from the fleet panel
+
+The Fleet page (`/fleet`) renders the node graph, a merged route table,
+certificate state and warnings such as a host served by two nodes. Editing a
+route or policy sends a command to the owning node, which applies it through the
+same serialized config writer as its local Web UI (atomic write, fsnotify
+reload, rollback on failure).
+
+Every command carries `if_match` with the target node's `config_hash`. If the
+node changed in the meantime the write is rejected with `409 conflict` instead
+of overwriting a local edit. Each attempt is appended to
+`<base_dir>/control-audit.jsonl`, and `IdempotencyKey` makes a retried request
+safe.
+
+Raw YAML editing is intentionally not exposed through the control plane.
+
 ## Routing
 
 ### Reverse proxy

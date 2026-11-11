@@ -55,6 +55,7 @@ type Manager struct {
 	dataDir    string
 	recordChan chan RequestRecord
 	stopChan   chan struct{}
+	doneChan   chan struct{}
 	mu         sync.RWMutex
 	evictions  int
 	stopOnce   sync.Once
@@ -71,6 +72,7 @@ func NewManager(dataDir string) *Manager {
 		dataDir:    dataDir,
 		recordChan: make(chan RequestRecord, 1000),
 		stopChan:   make(chan struct{}),
+		doneChan:   make(chan struct{}),
 	}
 
 	// Ensure data directory exists
@@ -185,6 +187,25 @@ func (m *Manager) GetData() *TrafficData {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.snapshotLocked(len(m.data.Records))
+}
+
+// GetSummary returns aggregate stats without copying the retention buffer. The
+// control plane polls this on a fixed cadence, so it must stay cheap even when
+// the buffer holds thousands of records.
+func (m *Manager) GetSummary() *TrafficData {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.snapshotLocked(0)
+}
+
+// TimeRange reports the oldest and newest retained record timestamps.
+func (m *Manager) TimeRange() (time.Time, time.Time) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.data.Records) == 0 {
+		return time.Time{}, time.Time{}
+	}
+	return m.data.Records[0].Timestamp, m.data.Records[len(m.data.Records)-1].Timestamp
 }
 
 // GetRecentData returns aggregate stats plus only the newest records. The WebUI
@@ -317,6 +338,7 @@ func (m *Manager) loadData() error {
 func (m *Manager) periodicSave() {
 	ticker := time.NewTicker(saveInterval)
 	defer ticker.Stop()
+	defer close(m.doneChan)
 
 	for {
 		select {
@@ -334,6 +356,14 @@ func (m *Manager) periodicSave() {
 }
 
 // Stop stops the manager
+// Stop flushes pending data. It waits briefly for the save goroutine so a
+// caller (or a test temp directory) can remove the data directory afterwards.
 func (m *Manager) Stop() {
-	m.stopOnce.Do(func() { close(m.stopChan) })
+	m.stopOnce.Do(func() {
+		close(m.stopChan)
+		select {
+		case <-m.doneChan:
+		case <-time.After(2 * time.Second):
+		}
+	})
 }
