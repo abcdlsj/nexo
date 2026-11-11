@@ -470,7 +470,7 @@ func portalFromSummary(portal *PortalSummary) *proxy.PortalConfig {
 	if portal == nil {
 		return nil
 	}
-	empty := portal.Name == "" && portal.Description == "" && portal.Group == "" &&
+	empty := portal.Name == "" && portal.Description == "" && portal.Icon == "" && portal.Group == "" &&
 		portal.ServiceKind == "" && portal.Order == 0 && !portal.Hidden
 	if empty {
 		return nil
@@ -478,6 +478,7 @@ func portalFromSummary(portal *PortalSummary) *proxy.PortalConfig {
 	return &proxy.PortalConfig{
 		Name:        portal.Name,
 		Description: portal.Description,
+		Icon:        portal.Icon,
 		Group:       portal.Group,
 		Kind:        portal.ServiceKind,
 		Order:       portal.Order,

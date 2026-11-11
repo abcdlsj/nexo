@@ -7,13 +7,13 @@
     </a>
 
     <div class="app-nav">
-      <a href="/proxies" class="{{if eq .ActiveNav "proxies"}}active{{end}}" {{if eq .ActiveNav "proxies"}}aria-current="page"{{end}}>
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v14H4zM4 10h16M9 5v14"/></svg>
-        <span>Routes</span>
-      </a>
       <a href="/fleet" class="{{if eq .ActiveNav "fleet"}}active{{end}}" {{if eq .ActiveNav "fleet"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v3M10.4 12.6 6.6 15.7M13.6 12.6l3.8 3.1"/></svg>
         <span>Fleet</span>
+      </a>
+      <a href="/proxies" class="{{if eq .ActiveNav "proxies"}}active{{end}}" {{if eq .ActiveNav "proxies"}}aria-current="page"{{end}}>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v14H4zM4 10h16M9 5v14"/></svg>
+        <span>Routes</span>
       </a>
       <a href="/certs" class="{{if eq .ActiveNav "certs"}}active{{end}}" {{if eq .ActiveNav "certs"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

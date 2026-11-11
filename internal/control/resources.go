@@ -121,6 +121,7 @@ type Backend struct {
 type PortalSummary struct {
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`
 	Group       string `json:"group,omitempty"`
 	ServiceKind string `json:"service_kind,omitempty"`
 	Order       int    `json:"order,omitempty"`
@@ -337,6 +338,7 @@ func routeResource(node nodeInfo, host, upstream, redirect string, auth bool, au
 		spec.Portal = &PortalSummary{
 			Name:        portal.Name,
 			Description: portal.Description,
+			Icon:        portal.Icon,
 			Group:       portal.Group,
 			ServiceKind: portal.Kind,
 			Order:       portal.Order,

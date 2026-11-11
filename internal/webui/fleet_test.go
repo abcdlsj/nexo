@@ -166,6 +166,46 @@ func TestFleetPageWithSingleLocalNode(t *testing.T) {
 	}
 }
 
+func TestFleetRouteIcons(t *testing.T) {
+	snapshot := &control.Snapshot{
+		Node: &control.Node{Spec: control.NodeSpec{ID: "node-a", Name: "A"}},
+		Routes: []*control.Route{
+			{Spec: control.RouteSpec{Host: "a.example.com", Portal: &control.PortalSummary{Icon: "/assets/a.svg"}}},
+			{Spec: control.RouteSpec{Host: "b.example.com"}},
+			{Spec: control.RouteSpec{Host: "c.example.com", Portal: &control.PortalSummary{Icon: "https://cdn.example.com/c.png"}}},
+		},
+	}
+	local := buildNodeView(&control.FleetNode{State: control.StateLocal, Snapshot: snapshot})
+	icons := map[string]string{}
+	for _, route := range local.Routes {
+		icons[route.Host] = route.IconURL
+		if route.Initial == "" {
+			t.Fatalf("route %s has no placeholder initial", route.Host)
+		}
+	}
+	if icons["a.example.com"] != "/assets/a.svg" {
+		t.Fatalf("portal icon not used: %q", icons["a.example.com"])
+	}
+	if icons["b.example.com"] != "/api/route-icon?domain=b.example.com" {
+		t.Fatalf("local fallback icon wrong: %q", icons["b.example.com"])
+	}
+	if icons["c.example.com"] != "https://cdn.example.com/c.png" {
+		t.Fatalf("absolute portal icon not used: %q", icons["c.example.com"])
+	}
+
+	remote := buildNodeView(&control.FleetNode{State: control.StateFresh, Snapshot: snapshot})
+	remoteIcons := map[string]string{}
+	for _, route := range remote.Routes {
+		remoteIcons[route.Host] = route.IconURL
+	}
+	if remoteIcons["a.example.com"] != "" {
+		t.Fatalf("relative icon must not leak to a peer card: %q", remoteIcons["a.example.com"])
+	}
+	if remoteIcons["c.example.com"] != "https://cdn.example.com/c.png" {
+		t.Fatalf("absolute icon should be kept on peers: %q", remoteIcons["c.example.com"])
+	}
+}
+
 func TestFleetPageWithoutControlPlane(t *testing.T) {
 	handler := newFleetHandler(t, nil)
 	rec := httptest.NewRecorder()

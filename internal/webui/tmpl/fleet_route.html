@@ -26,6 +26,7 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="node" value="{{.NodeID}}">
       <input type="hidden" name="if_match" value="{{.ConfigHash}}">
+      <input type="hidden" name="portal_icon" value="{{.PortalIcon}}">
 
       <label>Host
         <input type="text" name="host" value="{{.Host}}" {{if .Host}}readonly{{end}} required placeholder="app.example.com">
@@ -67,6 +68,7 @@
       <input type="hidden" name="node" value="{{.NodeID}}">
       <input type="hidden" name="host" value="{{.Host}}">
       <input type="hidden" name="if_match" value="{{.ConfigHash}}">
+      <input type="hidden" name="portal_icon" value="{{.PortalIcon}}">
       <button type="submit" class="btn btn-danger btn-sm">Delete route</button>
     </form>
     {{end}}

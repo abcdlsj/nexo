@@ -31,8 +31,8 @@
     .fleet-meta .warn { color: var(--coral); }
     .fleet-leaves { display: grid; gap: 4px; }
     .fleet-leaf { display: grid; grid-template-columns: 18px minmax(150px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
-    .fleet-leaf-icon { position: relative; width: 16px; height: 16px; display: grid; place-items: center; color: var(--blue); font: 10px/1 var(--mono-font); }
-    .fleet-leaf-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+    .fleet-leaf-icon { position: relative; width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 9px/1 var(--mono-font); font-weight: 700; text-transform: uppercase; }
+    .fleet-leaf-icon img { position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); object-fit: contain; background: var(--paper); }
     .fleet-leaf:hover { border-color: var(--line-soft); background: var(--blue-soft); text-decoration: none; }
     .fleet-leaf-host { overflow: hidden; font: 12px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 11px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
@@ -176,6 +176,13 @@
   <script>
     (function () {
       var NS = 'http://www.w3.org/2000/svg';
+
+      // A missing discovered icon falls back to the letter placeholder that is
+      // already rendered underneath the image.
+      document.querySelectorAll('img[data-favicon]').forEach(function (image) {
+        image.addEventListener('error', function () { image.hidden = true; }, { once: true });
+        if (image.complete && image.naturalWidth === 0) image.hidden = true;
+      });
       function point(element, side, canvasBox) {
         var box = element.getBoundingClientRect();
         return { x: (side === 'right' ? box.right : box.left) - canvasBox.left, y: box.top + box.height / 2 - canvasBox.top };

@@ -167,6 +167,7 @@ type FleetRouteData struct {
 	AuthExclude string
 	PortalName  string
 	PortalGroup string
+	PortalIcon  string
 	Error       string
 	LocalNode   bool
 }
@@ -219,6 +220,7 @@ func (h *Handler) handleFleetRoute(w http.ResponseWriter, r *http.Request) {
 		if route.Spec.Portal != nil {
 			data.PortalName = route.Spec.Portal.Name
 			data.PortalGroup = route.Spec.Portal.Group
+			data.PortalIcon = route.Spec.Portal.Icon
 		}
 	}
 
@@ -252,6 +254,7 @@ func (h *Handler) handleFleetRouteSave(w http.ResponseWriter, r *http.Request) {
 			Portal: &control.PortalSummary{
 				Name:  strings.TrimSpace(r.FormValue("portal_name")),
 				Group: strings.TrimSpace(r.FormValue("portal_group")),
+				Icon:  strings.TrimSpace(r.FormValue("portal_icon")),
 			},
 		},
 	}
@@ -487,7 +490,14 @@ func buildNodeView(node *control.FleetNode) FleetNodeView {
 			Auth:    route.Spec.AuthRequired,
 			Source:  route.Spec.Source,
 		}
-		if node.State == control.StateLocal {
+		if route.Spec.Portal != nil && strings.TrimSpace(route.Spec.Portal.Icon) != "" {
+			icon := strings.TrimSpace(route.Spec.Portal.Icon)
+			usable := validPortalIcon(icon) && !strings.EqualFold(icon, "auto")
+			if usable && (node.State == control.StateLocal || strings.HasPrefix(icon, "http://") || strings.HasPrefix(icon, "https://")) {
+				routeView.IconURL = icon
+			}
+		}
+		if routeView.IconURL == "" && node.State == control.StateLocal {
 			routeView.IconURL = "/api/route-icon?domain=" + url.QueryEscape(route.Spec.Host)
 		}
 		state, days, missing := certificateFor(route.Spec.Host, snapshot.Certificates)
