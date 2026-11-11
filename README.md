@@ -29,7 +29,6 @@ Open these pages:
 | Page | URL |
 | --- | --- |
 | Fleet | <http://127.0.0.1:8088/fleet> |
-| Routes | <http://127.0.0.1:8088/proxies> |
 | Certificates | <http://127.0.0.1:8088/certs> |
 | Traffic | <http://127.0.0.1:8088/traffic> |
 | Configuration | <http://127.0.0.1:8088/config> |

@@ -520,6 +520,10 @@
     th { background: var(--wash); }
     th, td { border-bottom-color: var(--line-soft); }
     .refresh-indicator { border: 1px solid var(--line-soft); background: var(--paper); }
+    .pager { display: flex; align-items: center; gap: 6px; }
+    .pager span { min-width: 44px; color: var(--ink-soft); font: 12px/1 var(--mono-font); text-align: center; }
+    .pager .btn { min-height: 28px; padding: 0 8px; font-size: 14px; }
+    .pager .btn[disabled] { opacity: .35; pointer-events: none; }
 
     @media (max-width: 860px) {
       .route-primary-grid { grid-template-columns: minmax(180px, 1fr) 160px; }
@@ -549,7 +553,7 @@
       .app-sidebar { inset: 0 0 auto; width: auto; height: 50px; display: grid; grid-template-columns: 116px minmax(0, 1fr); border-right: 0; border-bottom: 1px solid var(--line-soft); }
       .app-brand { height: 49px; padding-inline: 12px; border-right: 1px solid var(--line-soft); border-bottom: 0; }
       .core-readout { display: none; }
-      .app-nav { grid-column: 2; grid-row: 1; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; }
+      .app-nav { grid-column: 2; grid-row: 1; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
       .app-nav a { min-height: 49px; grid-template-columns: 16px; justify-content: center; padding: 0; border-left: 0; border-bottom: 2px solid transparent; }
       .app-nav a.active { border-bottom-color: var(--blue); }
       .app-nav span { display: none; }

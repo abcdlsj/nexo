@@ -13,7 +13,12 @@
       <div class="card-header">
         <div>
           <h2>Domain board</h2>
-          <p class="card-subtitle">Ranked by request volume</p>
+          <p class="card-subtitle">Ranked by request volume · 10 per page</p>
+        </div>
+        <div class="pager" id="domainPager">
+          <button type="button" class="btn btn-ghost btn-sm" id="domainPrev" aria-label="Previous domains">‹</button>
+          <span id="domainPage" aria-live="polite">–</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="domainNext" aria-label="Next domains">›</button>
         </div>
       </div>
       <div class="table-scroll">
@@ -79,9 +84,16 @@
       document.getElementById('statsGrid').setAttribute('aria-busy', 'false');
     }
 
-    function updateDomainTable(data) {
-      var domains = Object.values(data.domain_stats || {}).sort(function (a, b) { return b.requests - a.requests; });
-      var rows = domains.map(function (domain) {
+    var domainRows = [];
+    var domainPage = 0;
+    var domainPageSize = 10;
+
+    function renderDomainPage() {
+      var pages = Math.max(1, Math.ceil(domainRows.length / domainPageSize));
+      if (domainPage >= pages) domainPage = pages - 1;
+      if (domainPage < 0) domainPage = 0;
+      var start = domainPage * domainPageSize;
+      var rows = domainRows.slice(start, start + domainPageSize).map(function (domain) {
         var row = document.createElement('tr');
         appendCell(row, domain.domain);
         appendCell(row, formatNumber(domain.requests), true);
@@ -90,7 +102,22 @@
         return row;
       });
       replaceChildrenWithRows(document.getElementById('domainTableBody'), rows);
+      document.getElementById('domainPage').textContent = domainRows.length ? (domainPage + 1) + ' / ' + pages : '0';
+      document.getElementById('domainPrev').disabled = domainPage === 0;
+      document.getElementById('domainNext').disabled = domainRows.length === 0 || domainPage >= pages - 1;
     }
+
+    function updateDomainTable(data) {
+      domainRows = Object.values(data.domain_stats || {}).sort(function (a, b) { return b.requests - a.requests; });
+      renderDomainPage();
+    }
+
+    document.getElementById('domainPrev').addEventListener('click', function () {
+      if (domainPage > 0) { domainPage--; renderDomainPage(); }
+    });
+    document.getElementById('domainNext').addEventListener('click', function () {
+      domainPage++; renderDomainPage();
+    });
 
     function updateRequestsTable(data) {
       var records = (data.records || []).slice(-50).reverse();

@@ -38,7 +38,7 @@ func StartPreview(addr string) error {
 }
 
 func newPreviewHandler() http.Handler {
-	cfg, proxies, certs, trafficData := previewFixtures()
+	cfg, certs, trafficData := previewFixtures()
 	previewWebUI := &Handler{configs: newConfigStore(cfg, "", nil)}
 	security := previewWebUI.securityMiddleware
 	mux := http.NewServeMux()
@@ -69,8 +69,6 @@ func newPreviewHandler() http.Handler {
 		if r.Method == http.MethodPost {
 			target := "/"
 			switch {
-			case strings.HasPrefix(r.URL.Path, "/proxies"):
-				target = "/proxies"
 			case strings.HasPrefix(r.URL.Path, "/certs"):
 				target = "/certs"
 			case strings.HasPrefix(r.URL.Path, "/config"):
@@ -84,19 +82,6 @@ func newPreviewHandler() http.Handler {
 			http.Redirect(w, r, "/fleet", http.StatusSeeOther)
 		case "/fleet":
 			render(w, "fleet.html", FleetPageData{PageData: page("fleet"), Notice: "Preview mode has no control plane; the fleet view is empty."}, http.StatusOK)
-		case "/proxies":
-			var editEditor *RouteEditorData
-			if editDomain := strings.TrimSpace(r.URL.Query().Get("edit")); editDomain != "" {
-				if route, ok := proxies[editDomain]; ok {
-					editEditor = &RouteEditorData{ID: "edit-route", CSRFToken: "preview-token", Form: newRouteFormData(editDomain, route)}
-				}
-			}
-			render(w, "proxies.html", ProxiesData{
-				PageData:     page("proxies"),
-				Proxies:      proxies,
-				CreateEditor: RouteEditorData{ID: "create-route", CSRFToken: "preview-token", Form: newRouteFormData("", nil)},
-				EditEditor:   editEditor,
-			}, http.StatusOK)
 		case "/certs":
 			render(w, "certs.html", CertsData{PageData: page("certs"), Wildcards: cfg.Wildcards, Certs: certs, LastRenewal: "2026-07-27 09:42:18"}, http.StatusOK)
 		case "/config":
@@ -121,7 +106,7 @@ func newPreviewHandler() http.Handler {
 	return mux
 }
 
-func previewFixtures() (*config.Config, map[string]*proxy.Config, []CertInfo, *traffic.TrafficData) {
+func previewFixtures() (*config.Config, []CertInfo, *traffic.TrafficData) {
 	proxies := map[string]*proxy.Config{
 		"api.nexo.local":     {Upstream: "http://127.0.0.1:9001", Auth: true, Portal: &proxy.PortalConfig{Name: "Developer API", Description: "Internal API and developer console", Kind: "API", Group: "workspace", Order: 20}},
 		"studio.nexo.local":  {Upstream: "http://127.0.0.1:4173", Portal: &proxy.PortalConfig{Name: "Studio", Description: "Content, assets and publishing", Kind: "WEBSITE", Group: "workspace", Order: 10}},
@@ -161,8 +146,13 @@ func previewFixtures() (*config.Config, map[string]*proxy.Config, []CertInfo, *t
 		"metrics.nexo.local": {Domain: "metrics.nexo.local", Requests: 4217, HTTPSCount: 4217, UniqueIPCount: 12},
 		"old.nexo.local":     {Domain: "old.nexo.local", Requests: 814, HTTPSCount: 772, UniqueIPCount: 203},
 	}
+	// A few extra domains so the traffic pager shows more than one page.
+	for i, host := range []string{"docs.nexo.local", "media.nexo.local", "status.nexo.local", "edge.nexo.local", "lab.nexo.local", "mail.nexo.local", "git.nexo.local", "files.nexo.local", "chat.nexo.local", "notes.nexo.local", "build.nexo.local", "cache.nexo.local"} {
+		requests := int64(600 - i*37)
+		stats[host] = &traffic.DomainStats{Domain: host, Requests: requests, HTTPSCount: requests - int64(i), UniqueIPCount: 30 + i}
+	}
 	trafficData := &traffic.TrafficData{Records: records, DomainStats: stats, TotalReqs: 32755, HTTPSReqs: 32707, UniqueIPCount: 386, LastSaved: now.Add(-2 * time.Minute)}
-	return cfg, proxies, certs, trafficData
+	return cfg, certs, trafficData
 }
 
 const previewRawConfig = `email: ops@nexo.local

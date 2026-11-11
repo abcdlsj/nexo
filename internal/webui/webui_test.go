@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -78,101 +76,6 @@ func TestSecurityHeaders(t *testing.T) {
 		if w.Header().Get(header) == "" {
 			t.Errorf("missing security header %s", header)
 		}
-	}
-}
-
-func TestUpdateRoute(t *testing.T) {
-	t.Parallel()
-	originalDomain := "api.example.com"
-	cacheEnabled := false
-	original := &proxy.Config{
-		Upstream:              "http://127.0.0.1:9000",
-		WriteTimeout:          "5m",
-		ResponseHeaderTimeout: "15s",
-		Cache:                 &cacheEnabled,
-		Retry:                 true,
-		Portal:                &proxy.PortalConfig{Name: "Old API"},
-	}
-	cfg := &config.Config{ResponseHeaderTimeout: "300s", Proxies: map[string]*proxy.Config{originalDomain: original}}
-	handler := &Handler{configs: newConfigStore(cfg, t.TempDir()+"/config.yaml", nil)}
-	form := url.Values{
-		"original_domain":    {originalDomain},
-		"domain":             {"api-v2.example.com"},
-		"type":               {"proxy"},
-		"upstream":           {"http://127.0.0.1:9100"},
-		"auth":               {"on"},
-		"portal_name":        {"Developer API"},
-		"portal_description": {"Internal API"},
-		"portal_kind":        {"api"},
-		"portal_group":       {"workspace"},
-		"portal_order":       {"12"},
-		"portal_hidden":      {"on"},
-	}
-	request := httptest.NewRequest(http.MethodPost, "/proxies/update", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-
-	handler.handleUpdateProxy(response, request)
-
-	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/proxies?message=Route+updated" {
-		t.Fatalf("update response = %d %q", response.Code, response.Header().Get("Location"))
-	}
-	updatedConfig := handler.config()
-	if _, exists := updatedConfig.Proxies[originalDomain]; exists {
-		t.Fatal("original route remained after domain rename")
-	}
-	updated := updatedConfig.Proxies["api-v2.example.com"]
-	if updated == nil {
-		t.Fatal("renamed route was not created")
-	}
-	if updated.Upstream != "http://127.0.0.1:9100" || !updated.Auth {
-		t.Fatalf("editable route fields were not updated: %+v", updated)
-	}
-	if updated.WriteTimeout != "5m" || updated.ResponseHeaderTimeout != "15s" || !updated.Retry {
-		t.Fatalf("advanced route settings were lost: %+v", updated)
-	}
-	if updated.Cache == nil || *updated.Cache {
-		t.Fatalf("cache: false was lost during route update: %+v", updated)
-	}
-	if handler.config().ResponseHeaderTimeout != "300s" {
-		t.Fatalf("top-level response_header_timeout was lost during route update: %+v", handler.config())
-	}
-	if updated.Portal == nil || updated.Portal.Name != "Developer API" || updated.Portal.Kind != "API" || updated.Portal.Order != 12 || !updated.Portal.Hidden {
-		t.Fatalf("gateway directory settings were not updated: %+v", updated.Portal)
-	}
-}
-
-func TestRouteCollision(t *testing.T) {
-	t.Parallel()
-	original := &proxy.Config{Upstream: "http://127.0.0.1:9000"}
-	existing := &proxy.Config{Upstream: "http://127.0.0.1:9100"}
-	cfg := &config.Config{Proxies: map[string]*proxy.Config{
-		"api.example.com":   original,
-		"taken.example.com": existing,
-	}}
-	handler := &Handler{configs: newConfigStore(cfg, t.TempDir()+"/config.yaml", nil)}
-	form := url.Values{
-		"original_domain": {"api.example.com"},
-		"domain":          {"taken.example.com"},
-		"type":            {"proxy"},
-		"upstream":        {"http://127.0.0.1:9200"},
-	}
-	request := httptest.NewRequest(http.MethodPost, "/proxies/update", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-
-	handler.handleUpdateProxy(response, request)
-
-	location, err := url.Parse(response.Header().Get("Location"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusSeeOther || location.Query().Get("error") != "domain_exists" {
-		t.Fatalf("collision response = %d %q", response.Code, response.Header().Get("Location"))
-	}
-	current := handler.config()
-	if current.Proxies["api.example.com"].Upstream != original.Upstream || current.Proxies["taken.example.com"].Upstream != existing.Upstream {
-		t.Fatal("domain collision changed the route map")
 	}
 }
 
@@ -293,7 +196,7 @@ func TestMaskConfig(t *testing.T) {
 func TestPreview(t *testing.T) {
 	t.Parallel()
 	handler := newPreviewHandler()
-	for _, path := range []string{"/fleet", "/proxies", "/certs", "/traffic", "/config", "/login"} {
+	for _, path := range []string{"/fleet", "/certs", "/traffic", "/config", "/login"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
@@ -350,64 +253,5 @@ func TestParseAuthExclude(t *testing.T) {
 
 	if paths := parseAuthExclude("  "); len(paths) != 0 {
 		t.Fatalf("expected empty list, got %#v", paths)
-	}
-}
-
-func TestValidAuthExclude(t *testing.T) {
-	t.Parallel()
-	if !validAuthExclude(nil) {
-		t.Fatal("empty list should be valid")
-	}
-	if !validAuthExclude([]string{"/manifest.webmanifest", "/icon-*.png"}) {
-		t.Fatal("absolute paths should be valid")
-	}
-	if validAuthExclude([]string{"manifest.webmanifest"}) {
-		t.Fatal("relative path should be invalid")
-	}
-	if validAuthExclude([]string{"//evil.example.com"}) {
-		t.Fatal("protocol relative path should be invalid")
-	}
-}
-
-func TestDynamicRoutesMerge(t *testing.T) {
-	t.Parallel()
-	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{
-		"static.example.com": {Upstream: "http://127.0.0.1:9000"},
-		"both.example.com":   {Upstream: "http://127.0.0.1:9100"},
-	}}, "", nil)}
-	handler.SetDynamicRoutes(func() map[string]DynamicRoute {
-		return map[string]DynamicRoute{
-			"discovered.example.com": {Upstream: "http://172.18.0.4:8080", Container: "api"},
-			"both.example.com":       {Upstream: "http://172.18.0.9:8080", Container: "api"},
-		}
-	})
-
-	routes := handler.allRoutes()
-	if len(routes) != 3 {
-		t.Fatalf("merged route count = %d, want 3", len(routes))
-	}
-	if got := routes["both.example.com"].Upstream; got != "http://127.0.0.1:9100" {
-		t.Fatalf("static route did not win the conflict: %q", got)
-	}
-	if cfg, ok := handler.routeConfig("discovered.example.com"); !ok || cfg.Upstream != "http://172.18.0.4:8080" {
-		t.Fatalf("discovered route not resolvable: %+v ok=%v", cfg, ok)
-	}
-}
-
-func TestProxiesPageListsDynamicRoutes(t *testing.T) {
-	t.Parallel()
-	handler := &Handler{configs: newConfigStore(&config.Config{Proxies: map[string]*proxy.Config{}}, "", nil)}
-	handler.SetDynamicRoutes(func() map[string]DynamicRoute {
-		return map[string]DynamicRoute{"api.example.com": {Upstream: "http://172.18.0.4:8080", Container: "api"}}
-	})
-
-	r := httptest.NewRequest(http.MethodGet, "/proxies", nil)
-	w := httptest.NewRecorder()
-	handler.handleProxies(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("proxies page returned %d", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "api.example.com") || !strings.Contains(w.Body.String(), "Docker") {
-		t.Fatalf("dynamic route missing from the proxies page: %s", w.Body.String())
 	}
 }

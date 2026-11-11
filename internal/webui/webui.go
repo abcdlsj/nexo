@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html/template"
 	"net"
@@ -38,11 +37,7 @@ const (
 	trafficAPIRecordLimit = 100
 )
 
-var (
-	errRouteNotFound = errors.New("route not found")
-	errDomainExists  = errors.New("domain already exists")
-	errInvalidForm   = errors.New("invalid route form")
-)
+var ()
 
 var (
 	//go:embed tmpl/*.html
@@ -124,7 +119,8 @@ func (h *Handler) routeConfig(domain string) (*proxy.Config, bool) {
 	return nil, false
 }
 
-// allRoutes is the merged view of static and discovered routes.
+// allRoutes is the merged view of static and discovered routes, used by route
+// discovery and icon lookups.
 func (h *Handler) allRoutes() map[string]*proxy.Config {
 	routes := make(map[string]*proxy.Config)
 	for domain, route := range h.dynamicRoutes() {
@@ -188,10 +184,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/", protected(h.handleHome))
 	mux.HandleFunc("/logout", protected(h.handleLogout))
-	mux.HandleFunc("/proxies", protected(h.handleProxies))
-	mux.HandleFunc("/proxies/add", protected(h.handleAddProxy))
-	mux.HandleFunc("/proxies/update", protected(h.handleUpdateProxy))
-	mux.HandleFunc("/proxies/delete", protected(h.handleDeleteProxy))
 	mux.HandleFunc("/certs", protected(h.handleCerts))
 	mux.HandleFunc("/certs/renew", protected(h.handleRenewCert))
 	mux.HandleFunc("/config", protected(h.handleConfig))
