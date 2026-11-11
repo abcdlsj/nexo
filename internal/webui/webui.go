@@ -704,15 +704,28 @@ func (h *Handler) handleFavicon(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Legacy clients ask for /favicon.ico but cannot read SVG. Send them to the
+	// SVG file so the declared type matches the bytes.
+	if strings.HasSuffix(strings.ToLower(r.URL.Path), ".ico") {
+		http.Redirect(w, r, "/favicon.svg", http.StatusTemporaryRedirect)
+		return
+	}
 	data, err := tmplFS.ReadFile("tmpl/nexo.svg")
 	if err != nil {
 		log.Error("Failed to read favicon", "err", err)
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:8]) + `"`
 	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(data)
+	w.Header().Set("Cache-Control", "public, max-age=600")
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	_, _ = w.Write(data)
 }
 
 func (h *Handler) getCertInfo(cfg *config.Config) []CertInfo {

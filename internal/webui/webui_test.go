@@ -177,6 +177,35 @@ func TestMissingRouteIcon(t *testing.T) {
 	}
 }
 
+func TestFaviconCachingAndLegacyPath(t *testing.T) {
+	t.Parallel()
+	handler := &Handler{}
+
+	rec := httptest.NewRecorder()
+	handler.handleFavicon(rec, httptest.NewRequest(http.MethodGet, "/favicon.svg", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/svg+xml" {
+		t.Fatalf("favicon: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("favicon has no ETag")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec = httptest.NewRecorder()
+	handler.handleFavicon(rec, req)
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.handleFavicon(rec, httptest.NewRequest(http.MethodGet, "/favicon.ico", nil))
+	if rec.Code != http.StatusTemporaryRedirect || rec.Header().Get("Location") != "/favicon.svg" {
+		t.Fatalf("legacy favicon: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 func TestMaskConfig(t *testing.T) {
 	t.Parallel()
 	raw := "cloudflare:\n  \"api_token\" : token-value\nauth:\n  github:\n    client_secret: oauth-value\nwebui:\n  password: bcrypt-value\nemail: visible@example.com\n"
