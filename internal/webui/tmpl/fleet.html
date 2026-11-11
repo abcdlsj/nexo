@@ -30,7 +30,9 @@
     .fleet-meta { margin-top: 4px; overflow: hidden; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); text-overflow: ellipsis; }
     .fleet-meta .warn { color: var(--coral); }
     .fleet-leaves { display: grid; gap: 4px; }
-    .fleet-leaf { display: grid; grid-template-columns: minmax(160px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
+    .fleet-leaf { display: grid; grid-template-columns: 18px minmax(150px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
+    .fleet-leaf-icon { position: relative; width: 16px; height: 16px; display: grid; place-items: center; color: var(--blue); font: 10px/1 var(--mono-font); }
+    .fleet-leaf-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
     .fleet-leaf:hover { border-color: var(--line-soft); background: var(--blue-soft); text-decoration: none; }
     .fleet-leaf-host { overflow: hidden; font: 12px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 11px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
@@ -54,7 +56,7 @@
     @media (max-width: 900px) {
       .fleet-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
       .fleet-origin, .fleet-wires { display: none; }
-      .fleet-leaf { grid-template-columns: minmax(0, 1fr) auto; }
+      .fleet-leaf { grid-template-columns: 18px minmax(0, 1fr) auto; }
       .fleet-leaf-target { display: none; }
     }
   </style>
@@ -107,6 +109,7 @@
         <div class="fleet-leaves">
           {{range $j, $r := $n.Routes}}
           <a class="fleet-leaf" id="fleet-leaf-{{$i}}-{{$j}}" data-node-index="{{$i}}" href="/fleet/route?node={{$n.ID}}&host={{$r.Host}}">
+            <span class="fleet-leaf-icon">{{template "route_icon" $r}}</span>
             <span class="fleet-leaf-host">{{$r.Host}}</span>
             <span class="fleet-leaf-target">{{$r.Target}}</span>
             <span class="fleet-leaf-tags">

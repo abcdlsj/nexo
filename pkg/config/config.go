@@ -227,6 +227,9 @@ type GitHubAuthConfig struct {
 
 // WebUIConfig represents WebUI-specific configuration
 type WebUIConfig struct {
+	// Enabled serves the admin UI. Data-plane-only nodes can turn it off; the
+	// control plane keeps working without it.
+	Enabled  bool   `mapstructure:"enabled" yaml:"enabled"`
 	Host     string `mapstructure:"host" yaml:"host,omitempty"`         // Bind host (default: 127.0.0.1)
 	Port     string `mapstructure:"port" yaml:"port,omitempty"`         // WebUI port (default: 8080)
 	Username string `mapstructure:"username" yaml:"username,omitempty"` // WebUI login username
@@ -261,6 +264,7 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetDefault("docker:enabled", false)
 	v.SetDefault("docker:socket", "/var/run/docker.sock")
 	v.SetDefault("docker:host", "127.0.0.1")
+	v.SetDefault("webui.enabled", true)
 	v.SetDefault("control_plane.enabled", false)
 	v.SetDefault("control_plane.listen", "127.0.0.1:9090")
 	v.SetDefault("control_plane.coordinator.enabled", false)

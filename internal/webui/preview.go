@@ -81,14 +81,9 @@ func newPreviewHandler() http.Handler {
 		}
 		switch r.URL.Path {
 		case "/":
-			routes := buildRouteViews(proxies)
-			for index := range routes {
-				if routes[index].Domain == "metrics.nexo.local" {
-					routes[index].Unavailable = true
-				}
-			}
-			data := DashboardData{PageData: page("dashboard"), Routes: routes, ProtectedRoutes: 2}
-			render(w, "dashboard.html", data, http.StatusOK)
+			http.Redirect(w, r, "/fleet", http.StatusSeeOther)
+		case "/fleet":
+			render(w, "fleet.html", FleetPageData{PageData: page("fleet"), Notice: "Preview mode has no control plane; the fleet view is empty."}, http.StatusOK)
 		case "/proxies":
 			var editEditor *RouteEditorData
 			if editDomain := strings.TrimSpace(r.URL.Query().Get("edit")); editDomain != "" {

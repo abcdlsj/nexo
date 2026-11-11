@@ -126,28 +126,19 @@ func TestFleetPageRenders(t *testing.T) {
 		t.Fatalf("fleet page: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Gateway A", "Gateway B", "app.example.com", "duplicate_domain", "21 ms", "expiring"} {
+	for _, want := range []string{"Gateway A", "Gateway B", "app.example.com", "duplicate_domain", "21 ms", "expiring", `/api/route-icon?domain=app.example.com`, "fleet-leaf-icon"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("fleet page missing %q", want)
 		}
 	}
 }
 
-func TestDashboardShowsFleetNodes(t *testing.T) {
+func TestHomeRedirectsToFleet(t *testing.T) {
 	handler := newFleetHandler(t, &fakeFleet{data: fleetFixture()})
 	rec := httptest.NewRecorder()
-	handler.handleDashboard(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("dashboard: %d %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	for _, want := range []string{"topology-row", "remote-node-1", "Gateway B", "state-fresh", "topology-service-1-0", "weft.example.com"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("dashboard topology missing %q", want)
-		}
-	}
-	if strings.Contains(body, "remote-node-0") {
-		t.Fatal("local node must not be rendered as a remote card")
+	handler.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/fleet" {
+		t.Fatalf("home: %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 }
 

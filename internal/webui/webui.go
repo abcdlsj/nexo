@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -134,7 +133,8 @@ func (h *Handler) allRoutes() map[string]*proxy.Config {
 	return routes
 }
 
-func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *auth.Manager, onChange func() error, trafficMgr *traffic.Manager) *Handler {
+func New(store *configStore, certMgr *cert.Manager, authMgr *auth.Manager, trafficMgr *traffic.Manager) *Handler {
+	cfg := store.Snapshot()
 	rlConfig := &RateLimitConfig{
 		Enabled:  cfg.Security.RateLimitEnabled,
 		Requests: cfg.Security.RateLimitRequests,
@@ -148,7 +148,7 @@ func New(cfg *config.Config, cfgPath string, certMgr *cert.Manager, authMgr *aut
 	}
 
 	handler := &Handler{
-		configs:        newConfigStore(cfg, cfgPath, onChange),
+		configs:        store,
 		certMgr:        certMgr,
 		authMgr:        authMgr,
 		rateLimiter:    NewRateLimiter(rlConfig),
@@ -167,19 +167,7 @@ func (h *Handler) config() *config.Config {
 	if h == nil || h.configs == nil {
 		return &config.Config{}
 	}
-	return h.configs.snapshot()
-}
-
-// SetConfig publishes a new immutable snapshot after an external reload.
-func (h *Handler) SetConfig(cfg *config.Config) {
-	if h == nil {
-		return
-	}
-	if h.configs == nil {
-		h.configs = newConfigStore(cfg, "", nil)
-		return
-	}
-	h.configs.replace(cfg)
+	return h.configs.Snapshot()
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -192,7 +180,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	protected := func(next http.HandlerFunc) http.HandlerFunc {
 		return h.securityMiddleware(h.authMiddleware(next))
 	}
-	mux.HandleFunc("/", protected(h.handleDashboard))
+	mux.HandleFunc("/", protected(h.handleHome))
 	mux.HandleFunc("/logout", protected(h.handleLogout))
 	mux.HandleFunc("/proxies", protected(h.handleProxies))
 	mux.HandleFunc("/proxies/add", protected(h.handleAddProxy))
@@ -597,8 +585,8 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		MaskedAPIToken: maskAPIToken(cfg.Cloudflare.APIToken),
 	}
 
-	if h.configs.path != "" {
-		content, err := os.ReadFile(h.configs.path)
+	if h.configs.Path() != "" {
+		content, err := os.ReadFile(h.configs.Path())
 		if err == nil {
 			data.RawConfig = maskSensitiveConfig(string(content))
 		}
@@ -616,7 +604,7 @@ func (h *Handler) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.configs.update(func(next *config.Config) error {
+	if err := h.configs.Update(func(next *config.Config) error {
 		switch r.FormValue("section") {
 		case "basic":
 			if email := strings.TrimSpace(r.FormValue("email")); email != "" {
@@ -645,7 +633,7 @@ func (h *Handler) handleAddWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := strings.TrimSpace(r.FormValue("wildcard"))
 	if validDomain(wildcard, true) {
-		if err := h.configs.update(func(next *config.Config) error {
+		if err := h.configs.Update(func(next *config.Config) error {
 			if !slices.Contains(next.Wildcards, wildcard) {
 				next.Wildcards = append(next.Wildcards, wildcard)
 			}
@@ -668,7 +656,7 @@ func (h *Handler) handleDeleteWildcard(w http.ResponseWriter, r *http.Request) {
 
 	wildcard := r.FormValue("wildcard")
 	if wildcard != "" {
-		if err := h.configs.update(func(next *config.Config) error {
+		if err := h.configs.Update(func(next *config.Config) error {
 			next.Wildcards = slices.DeleteFunc(next.Wildcards, func(w string) bool { return w == wildcard })
 			return nil
 		}); err != nil {
@@ -696,7 +684,7 @@ func (h *Handler) handleRegenerateSecretKey(w http.ResponseWriter, r *http.Reque
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(b)
 
-	if err := h.configs.update(func(next *config.Config) error {
+	if err := h.configs.Update(func(next *config.Config) error {
 		next.Auth.SecretKey = newKey
 		return nil
 	}); err != nil {
@@ -853,7 +841,7 @@ func (h *Handler) handleUpdateSecurity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.configs.update(func(next *config.Config) error {
+	if err := h.configs.Update(func(next *config.Config) error {
 		next.Security.RateLimitEnabled = r.FormValue("rate_limit_enabled") == "on"
 		if value, err := strconv.Atoi(r.FormValue("rate_limit_requests")); err == nil && value > 0 {
 			next.Security.RateLimitRequests = value
@@ -951,32 +939,6 @@ func validDomain(domain string, wildcard bool) bool {
 		}
 	}
 	return true
-}
-
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".nexo-config-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }
 
 func maskAPIToken(token string) string {

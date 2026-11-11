@@ -34,7 +34,7 @@ func (h *Handler) SetFleet(provider FleetProvider) {
 // UpdateConfig applies a mutation through the single config writer, preserving
 // atomic writes, reload and rollback semantics.
 func (h *Handler) UpdateConfig(mutate func(cfg *config.Config) error) error {
-	return h.configs.update(mutate)
+	return h.configs.Update(mutate)
 }
 
 // ---------- view models ----------
@@ -68,6 +68,9 @@ type FleetNodeView struct {
 
 type FleetRouteView struct {
 	Host        string
+	Name        string
+	Initial     string
+	IconURL     string
 	Kind        string
 	Target      string
 	Auth        bool
@@ -75,6 +78,31 @@ type FleetRouteView struct {
 	CertState   string
 	CertDays    int
 	CertMissing bool
+}
+
+// defaultRouteName derives a readable label from the leftmost host label.
+func defaultRouteName(domain string) string {
+	label := strings.SplitN(domain, ".", 2)[0]
+	words := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '_' })
+	for i, word := range words {
+		letters := []rune(word)
+		if len(letters) > 0 {
+			letters[0] = []rune(strings.ToUpper(string(letters[0])))[0]
+			words[i] = string(letters)
+		}
+	}
+	if len(words) == 0 {
+		return domain
+	}
+	return strings.Join(words, " ")
+}
+
+func routeInitial(name string) string {
+	letters := []rune(strings.TrimSpace(name))
+	if len(letters) == 0 {
+		return "N"
+	}
+	return strings.ToUpper(string(letters[0]))
 }
 
 type FleetCertView struct {
@@ -446,12 +474,21 @@ func buildNodeView(node *control.FleetNode) FleetNodeView {
 	})
 
 	for _, route := range snapshot.Routes {
+		name := defaultRouteName(route.Spec.Host)
+		if route.Spec.Portal != nil && strings.TrimSpace(route.Spec.Portal.Name) != "" {
+			name = route.Spec.Portal.Name
+		}
 		routeView := FleetRouteView{
-			Host:   route.Spec.Host,
-			Kind:   route.Spec.Kind,
-			Target: renderBackend(route.Spec.Backend),
-			Auth:   route.Spec.AuthRequired,
-			Source: route.Spec.Source,
+			Host:    route.Spec.Host,
+			Name:    name,
+			Initial: routeInitial(name),
+			Kind:    route.Spec.Kind,
+			Target:  renderBackend(route.Spec.Backend),
+			Auth:    route.Spec.AuthRequired,
+			Source:  route.Spec.Source,
+		}
+		if node.State == control.StateLocal {
+			routeView.IconURL = "/api/route-icon?domain=" + url.QueryEscape(route.Spec.Host)
 		}
 		state, days, missing := certificateFor(route.Spec.Host, snapshot.Certificates)
 		routeView.CertState = state

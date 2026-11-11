@@ -1,4 +1,4 @@
-package webui
+package configstore
 
 import (
 	"errors"
@@ -17,25 +17,25 @@ func TestConfigStoreRollback(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	initial := &config.Config{Email: "before@example.com", Wildcards: []string{"*.example.com"}}
-	writeTestConfig(t, path, initial)
+	writeTestConfigFile(t, path, initial)
 
 	reloadFailure := errors.New("reload failed")
 	var reloads atomic.Int32
-	store := newConfigStore(initial, path, func() error {
+	store := New(initial, path, func() error {
 		if reloads.Add(1) == 1 {
 			return reloadFailure
 		}
 		return nil
 	})
 
-	err := store.update(func(next *config.Config) error {
+	err := store.Update(func(next *config.Config) error {
 		next.Email = "after@example.com"
 		return nil
 	})
 	if !errors.Is(err, reloadFailure) {
 		t.Fatalf("update error = %v, want reload failure", err)
 	}
-	if got := store.snapshot().Email; got != initial.Email {
+	if got := store.Snapshot().Email; got != initial.Email {
 		t.Fatalf("snapshot email = %q, want %q", got, initial.Email)
 	}
 	if got := readTestConfig(t, path).Email; got != initial.Email {
@@ -50,8 +50,8 @@ func TestConfigStoreConcurrency(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	initial := &config.Config{}
-	writeTestConfig(t, path, initial)
-	store := newConfigStore(initial, path, nil)
+	writeTestConfigFile(t, path, initial)
+	store := New(initial, path, nil)
 
 	const updates = 10
 	errs := make(chan error, updates)
@@ -61,7 +61,7 @@ func TestConfigStoreConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- store.update(func(next *config.Config) error {
+			errs <- store.Update(func(next *config.Config) error {
 				next.Wildcards = append(next.Wildcards, fmt.Sprintf("*.route-%d.example.com", i))
 				return nil
 			})
@@ -91,17 +91,17 @@ func TestConfigStoreConcurrency(t *testing.T) {
 			}
 		}
 	}
-	assertWildcards("snapshot", store.snapshot().Wildcards)
+	assertWildcards("snapshot", store.Snapshot().Wildcards)
 	assertWildcards("file", readTestConfig(t, path).Wildcards)
 }
 
-func writeTestConfig(t *testing.T, path string, cfg *config.Config) {
+func writeTestConfigFile(t *testing.T, path string, cfg *config.Config) {
 	t.Helper()
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(path, data, 0600); err != nil {
+	if err := WriteFileAtomic(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 }

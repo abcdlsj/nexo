@@ -7,10 +7,6 @@
     </a>
 
     <div class="app-nav">
-      <a href="/" class="{{if eq .ActiveNav "dashboard"}}active{{end}}" {{if eq .ActiveNav "dashboard"}}aria-current="page"{{end}}>
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="m7.5 11 9-4M7.5 13l9 4"/></svg>
-        <span>Gateway</span>
-      </a>
       <a href="/proxies" class="{{if eq .ActiveNav "proxies"}}active{{end}}" {{if eq .ActiveNav "proxies"}}aria-current="page"{{end}}>
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h16v14H4zM4 10h16M9 5v14"/></svg>
         <span>Routes</span>
@@ -38,21 +34,13 @@
 
   <header class="app-topbar">
     <h1 class="app-location">
-      {{if eq .ActiveNav "dashboard"}}Gateway
-      {{else if eq .ActiveNav "proxies"}}Routes
+      {{if eq .ActiveNav "proxies"}}Routes
       {{else if eq .ActiveNav "certs"}}Certificates
       {{else if eq .ActiveNav "fleet"}}Fleet
       {{else if eq .ActiveNav "traffic"}}Traffic
       {{else if eq .ActiveNav "config"}}Configuration
       {{else}}NEXO{{end}}
     </h1>
-    {{if eq .ActiveNav "dashboard"}}
-    <label class="gateway-search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
-      <input id="route-search" type="search" placeholder="Filter routes" aria-label="Filter routes">
-    </label>
-    <a class="topbar-action" href="/proxies#add-route"><b>＋</b><span>Route</span></a>
-    {{end}}
     {{if eq .ActiveNav "traffic"}}
     <div class="traffic-refresh">
       <div class="refresh-indicator" aria-live="polite"><span id="spinner" aria-hidden="true">↻</span> <span id="lastUpdate">Connecting...</span></div>

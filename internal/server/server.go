@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/abcdlsj/nexo/internal/configstore"
 	"github.com/abcdlsj/nexo/internal/control"
 	"github.com/abcdlsj/nexo/internal/webui"
 	"github.com/abcdlsj/nexo/pkg/auth"
@@ -273,6 +274,7 @@ type Server struct {
 
 	watcher *fsnotify.Watcher
 	cfgPath string
+	store   *configstore.Store
 }
 
 func New(cfg *config.Config, cfgPath string) (*Server, error) {
@@ -353,6 +355,7 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		cfgPath:      cfgPath,
 	}
 	s.cfg.Store(cfg)
+	s.store = configstore.New(cfg, cfgPath, func() error { return s.Reload() })
 
 	go s.renewCerts()
 	go s.retryCerts()
@@ -379,8 +382,14 @@ func (s *Server) Start() error {
 		log.Error("Failed to setup config watcher", "err", err)
 	}
 
-	// Start WebUI server first (in background)
-	go s.startWebUI()
+	// Start WebUI server first (in background) unless this node is a pure data
+	// plane. Clustering works without it: the control plane does not depend on
+	// the admin UI.
+	if s.config().WebUI.Enabled {
+		go s.startWebUI()
+	} else {
+		log.Info("Web UI disabled by configuration")
+	}
 
 	// Start the machine API before the data plane so a coordinator can poll as
 	// soon as this node is serving.
@@ -422,9 +431,7 @@ func (s *Server) Start() error {
 // startWebUI starts the WebUI server
 func (s *Server) startWebUI() {
 	cfg := s.config()
-	webuiHandler := webui.New(cfg, s.cfgPath, s.certm, s.authm, func() error {
-		return s.Reload()
-	}, s.trafficMgr)
+	webuiHandler := webui.New(s.store, s.certm, s.authm, s.trafficMgr)
 	webuiHandler.SetDynamicRoutes(s.dynamicWebRoutes)
 	if s.controlServer() != nil {
 		webuiHandler.SetFleet(fleetBridge{server: s})
@@ -477,7 +484,7 @@ func (s *Server) startControlPlane() {
 	}
 
 	ctl, err := control.New(control.Options{
-		Config:     s.config,
+		Config:     s.store.Snapshot,
 		NodeID:     cfg.ControlPlane.Node.ID,
 		NodeName:   cfg.ControlPlane.Node.Name,
 		Labels:     cfg.ControlPlane.Node.Labels,
@@ -486,7 +493,7 @@ func (s *Server) startControlPlane() {
 		BaseDir:    cfg.BaseDir,
 		Discovered: s.dynamicControlRoutes,
 		Traffic:    s.trafficMgr,
-		Mutate:     s.mutateConfig,
+		Mutate:     s.store.Update,
 		RenewCert:  s.renewCertificate,
 	})
 	if err != nil {
@@ -507,17 +514,6 @@ func (s *Server) startControlPlane() {
 			log.Error("Control plane stopped", "err", err)
 		}
 	}()
-}
-
-// mutateConfig routes control-plane writes through the Web UI config store, so
-// remote and local edits share one serializer, atomic write, reload and
-// rollback path.
-func (s *Server) mutateConfig(mutate func(*config.Config) error) error {
-	h := s.webUIHandler()
-	if h == nil {
-		return fmt.Errorf("web ui is not ready")
-	}
-	return h.UpdateConfig(mutate)
 }
 
 func (s *Server) renewCertificate(domain string) error {
@@ -1170,9 +1166,12 @@ func (s *Server) Reload() error {
 	}
 
 	previous := s.config()
+	previousStore := s.store.Snapshot()
 	s.cfg.Store(newCfg)
+	s.store.Replace(newCfg)
 	if err := s.loadProxies(true); err != nil {
 		s.cfg.Store(previous)
+		s.store.Replace(previousStore)
 		_ = s.loadProxies(true)
 		return fmt.Errorf("failed to load proxies: %v", err)
 	}
@@ -1189,13 +1188,6 @@ func (s *Server) Reload() error {
 			s.authm.UpdateSecretKey(newCfg.Auth.SecretKey)
 		}
 	}
-	s.mu.RLock()
-	webuiHandler := s.webuiHandler
-	s.mu.RUnlock()
-	if webuiHandler != nil {
-		webuiHandler.SetConfig(newCfg)
-	}
-
 	return nil
 }
 

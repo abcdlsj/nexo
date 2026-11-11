@@ -4,7 +4,7 @@
 
 Nexo maps domains to upstream services or HTTPS redirects, obtains certificates through Cloudflare DNS-01, and keeps day-to-day operations visible through a self-contained Web UI.
 
-![Nexo gateway topology and services](docs/assets/nexo-dashboard.png)
+![Nexo fleet view](docs/assets/nexo-dashboard.png)
 
 ## Why Nexo
 
@@ -29,7 +29,7 @@ Open these pages:
 
 | Page | URL |
 | --- | --- |
-| Dashboard | <http://127.0.0.1:8088/> |
+| Fleet | <http://127.0.0.1:8088/fleet> |
 | Routes | <http://127.0.0.1:8088/proxies> |
 | Certificates | <http://127.0.0.1:8088/certs> |
 | Traffic | <http://127.0.0.1:8088/traffic> |
@@ -218,6 +218,9 @@ control_plane:
 - Commands require `Content-Type: application/json`, which forces a CORS
   preflight and blocks cross-site form posts against a loopback listener.
 - The node id is generated once and persisted to `<base_dir>/node-id`.
+- Data-plane nodes can set `webui.enabled: false`. The admin UI is then not
+  started at all, while the control API and fleet edits keep working; only the
+  coordinator needs a Web UI.
 
 Machine API (`/control/v1`, bearer token, JSON):
 
@@ -476,7 +479,7 @@ proxies:
       hidden: false
 ```
 
-`icon` accepts `auto`, a root-relative path, or an HTTP(S) URL. `kind` accepts `website`, `api`, or `service`; omit it to use automatic detection. Set `hidden: true` to keep a route active without listing it on the gateway dashboard.
+`icon` accepts `auto`, a root-relative path, or an HTTP(S) URL. `kind` accepts `website`, `api`, or `service`; omit it to use automatic detection. Set `hidden: true` to keep a route active without listing it in the fleet view.
 
 ### GitHub OAuth protection
 

@@ -16,7 +16,6 @@ import (
 
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"golang.org/x/net/html"
-	"golang.org/x/net/publicsuffix"
 )
 
 const (
@@ -404,14 +403,4 @@ func normalizeRouteKind(kind string) string {
 	default:
 		return ""
 	}
-}
-
-func isApexDomain(domain string) bool {
-	domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
-	_, icann := publicsuffix.PublicSuffix(domain)
-	if !icann {
-		return false
-	}
-	registrable, err := publicsuffix.EffectiveTLDPlusOne(domain)
-	return err == nil && domain == registrable
 }

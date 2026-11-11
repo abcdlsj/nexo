@@ -4,198 +4,13 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/abcdlsj/nexo/internal/control"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
 )
-
-type DashboardData struct {
-	PageData
-	Routes          []RouteView
-	ProtectedRoutes int
-	Instances       []TopologyInstance
-}
-
-// TopologyInstance is one Nexo instance in the gateway graph, with the routes
-// it serves. The local instance comes first.
-type TopologyInstance struct {
-	Local    bool
-	ID       string
-	Name     string
-	State    string
-	Requests int64
-	Routes   []RouteView
-}
-
-// RouteView is the stable, presentation-only form of a configured route.
-type RouteView struct {
-	Domain      string
-	Name        string
-	Description string
-	IconURL     string
-	Initial     string
-	Group       string
-	Target      string
-	Kind        string
-	Policy      string
-	Href        string
-	Order       int
-	Auth        bool
-	Unavailable bool
-}
-
-func buildRouteViews(proxies map[string]*proxy.Config) []RouteView {
-	return buildRouteViewsWithDiscovery(proxies, nil)
-}
-
-func buildRouteViewsWithDiscovery(proxies map[string]*proxy.Config, discoveries map[string]routeDiscoveryResult) []RouteView {
-	routes := make([]RouteView, 0, len(proxies))
-	for domain, cfg := range proxies {
-		if cfg == nil || (cfg.Portal != nil && cfg.Portal.Hidden) || (cfg.Portal == nil && (cfg.Redirect != "" || isApexDomain(domain))) {
-			continue
-		}
-
-		name := defaultRouteName(domain)
-		description := ""
-		kind := "SERVICE"
-		target := cfg.Upstream
-		group := "default"
-		order := 0
-		if discovery, ok := discoveries[domain]; ok {
-			if value := normalizeRouteKind(discovery.Kind); value != "" {
-				kind = value
-			}
-		}
-		if cfg.Redirect != "" {
-			kind = "REDIRECT"
-			target = cfg.Redirect
-		}
-		if cfg.Portal != nil {
-			if value := strings.TrimSpace(cfg.Portal.Name); value != "" {
-				name = value
-			}
-			if value := strings.TrimSpace(cfg.Portal.Description); value != "" {
-				description = value
-			}
-			if value := strings.TrimSpace(cfg.Portal.Group); value != "" {
-				group = value
-			}
-			if cfg.Redirect == "" {
-				if value := normalizeRouteKind(cfg.Portal.Kind); value != "" {
-					kind = value
-				}
-			}
-			order = cfg.Portal.Order
-		}
-		policy := "PUBLIC"
-		if cfg.Auth {
-			policy = "OAUTH"
-		}
-		discovery := discoveries[domain]
-		iconURL := portalIconURL(domain, cfg.Portal)
-		if automaticPortalIcon(cfg.Portal) && len(discovery.Icon) == 0 {
-			iconURL = ""
-		}
-		routes = append(routes, RouteView{
-			Domain:      domain,
-			Name:        name,
-			Description: description,
-			IconURL:     iconURL,
-			Initial:     routeInitial(name),
-			Group:       group,
-			Target:      target,
-			Kind:        kind,
-			Policy:      policy,
-			Href:        "https://" + domain,
-			Order:       order,
-			Auth:        cfg.Auth,
-			Unavailable: discovery.Unavailable,
-		})
-	}
-
-	slices.SortFunc(routes, func(a, b RouteView) int {
-		if a.Order != b.Order {
-			if a.Order == 0 {
-				return 1
-			}
-			if b.Order == 0 {
-				return -1
-			}
-			if a.Order < b.Order {
-				return -1
-			}
-			return 1
-		}
-		if result := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); result != 0 {
-			return result
-		}
-		return strings.Compare(a.Domain, b.Domain)
-	})
-	return routes
-}
-
-func defaultRouteName(domain string) string {
-	label := strings.SplitN(domain, ".", 2)[0]
-	words := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '_' })
-	for i, word := range words {
-		letters := []rune(word)
-		if len(letters) > 0 {
-			letters[0] = []rune(strings.ToUpper(string(letters[0])))[0]
-			words[i] = string(letters)
-		}
-	}
-	if len(words) == 0 {
-		return domain
-	}
-	return strings.Join(words, " ")
-}
-
-func routeInitial(name string) string {
-	letters := []rune(strings.TrimSpace(name))
-	if len(letters) == 0 {
-		return "N"
-	}
-	return strings.ToUpper(string(letters[0]))
-}
-
-func portalIconURL(domain string, portal *proxy.PortalConfig) string {
-	fallback := "/api/route-icon?domain=" + url.QueryEscape(domain)
-	if portal == nil {
-		return fallback
-	}
-	raw := strings.TrimSpace(portal.Icon)
-	if raw == "" || strings.EqualFold(raw, "auto") {
-		return fallback
-	}
-	if validPortalIcon(raw) {
-		return raw
-	}
-	return fallback
-}
-
-func automaticPortalIcon(portal *proxy.PortalConfig) bool {
-	if portal == nil {
-		return true
-	}
-	raw := strings.TrimSpace(portal.Icon)
-	return raw == "" || strings.EqualFold(raw, "auto") || !validPortalIcon(raw)
-}
-
-func validPortalIcon(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.EqualFold(raw, "auto") {
-		return true
-	}
-	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
-		return true
-	}
-	return validHTTPURL(raw)
-}
 
 type CertInfo struct {
 	Domain         string
@@ -205,126 +20,6 @@ type CertInfo struct {
 	Issuer         string
 	UsesWildcard   bool   // whether using a wildcard certificate
 	WildcardDomain string // the wildcard domain used (if any)
-}
-
-func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		h.render404(w)
-		return
-	}
-
-	discoveries := h.discoverRoutes(r.Context())
-	data := DashboardData{
-		PageData: h.newPageData(r, "dashboard"),
-		Routes:   buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
-	}
-	data.Instances = h.topologyInstances(discoveries)
-
-	for _, route := range data.Routes {
-		if route.Auth {
-			data.ProtectedRoutes++
-		}
-	}
-
-	if err := tmpl.ExecuteTemplate(w, "dashboard.html", data); err != nil {
-		log.Error("Failed to render dashboard", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
-}
-
-// topologyInstances builds the gateway graph: the local instance plus every
-// peer a coordinator observes, each with the routes it owns.
-func (h *Handler) topologyInstances(discoveries map[string]routeDiscoveryResult) []TopologyInstance {
-	instances := []TopologyInstance{{
-		Local:  true,
-		ID:     "local",
-		Name:   "NEXO",
-		State:  "local",
-		Routes: buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
-	}}
-
-	fleet := h.fleetSnapshot()
-	if fleet == nil {
-		return instances
-	}
-
-	peers := make([]TopologyInstance, 0, len(fleet.Nodes))
-	for _, node := range fleet.Nodes {
-		if node.State == control.StateLocal {
-			continue
-		}
-		instance := TopologyInstance{ID: node.PeerID, Name: node.PeerID, State: node.State}
-		if node.Snapshot != nil && node.Snapshot.Node != nil {
-			if node.Snapshot.Node.Spec.ID != "" {
-				instance.ID = node.Snapshot.Node.Spec.ID
-			}
-			if node.Snapshot.Node.Spec.Name != "" {
-				instance.Name = node.Snapshot.Node.Spec.Name
-			}
-			if node.Snapshot.Traffic != nil {
-				instance.Requests = node.Snapshot.Traffic.Status.TotalRequests
-			}
-			instance.Routes = peerRouteViews(node.Snapshot.Routes)
-		}
-		peers = append(peers, instance)
-	}
-	slices.SortFunc(peers, func(a, b TopologyInstance) int {
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
-	return append(instances, peers...)
-}
-
-// peerRouteViews maps remote route resources onto the same presentation type
-// the local graph uses, so the template and wires stay uniform.
-func peerRouteViews(routes []*control.Route) []RouteView {
-	views := make([]RouteView, 0, len(routes))
-	for _, route := range routes {
-		if route == nil {
-			continue
-		}
-		portal := route.Spec.Portal
-		if portal != nil && portal.Hidden {
-			continue
-		}
-		if route.Spec.Kind == "redirect" && portal == nil {
-			continue
-		}
-		name := defaultRouteName(route.Spec.Host)
-		if portal != nil && strings.TrimSpace(portal.Name) != "" {
-			name = portal.Name
-		}
-		kind := "SERVICE"
-		if strings.TrimSpace(route.Spec.Kind) != "" {
-			kind = strings.ToUpper(route.Spec.Kind)
-		}
-		policy := "PUBLIC"
-		if route.Spec.AuthRequired {
-			policy = "OAUTH"
-		}
-		views = append(views, RouteView{
-			Domain:  route.Spec.Host,
-			Name:    name,
-			IconURL: "",
-			Initial: routeInitial(name),
-			Group:   portalGroup(portal),
-			Target:  renderBackend(route.Spec.Backend),
-			Kind:    kind,
-			Policy:  policy,
-			Href:    "https://" + route.Spec.Host,
-			Auth:    route.Spec.AuthRequired,
-		})
-	}
-	slices.SortFunc(views, func(a, b RouteView) int {
-		return strings.Compare(a.Domain, b.Domain)
-	})
-	return views
-}
-
-func portalGroup(portal *control.PortalSummary) string {
-	if portal == nil || strings.TrimSpace(portal.Group) == "" {
-		return "default"
-	}
-	return portal.Group
 }
 
 type ProxiesData struct {
@@ -387,6 +82,27 @@ func newRouteFormData(domain string, cfg *proxy.Config) RouteFormData {
 		form.PortalHidden = cfg.Portal.Hidden
 	}
 	return form
+}
+
+// handleHome sends the root to the fleet view, the only top-level page.
+func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		h.render404(w)
+		return
+	}
+	http.Redirect(w, r, "/fleet", http.StatusSeeOther)
+}
+
+// validPortalIcon accepts "auto", a root-relative path, or an HTTP(S) URL.
+func validPortalIcon(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "auto") {
+		return true
+	}
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		return true
+	}
+	return validHTTPURL(raw)
 }
 
 func (h *Handler) handleProxies(w http.ResponseWriter, r *http.Request) {
@@ -455,7 +171,7 @@ func (h *Handler) handleUpdateProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	formError := ""
-	err := h.configs.update(func(next *config.Config) error {
+	err := h.configs.Update(func(next *config.Config) error {
 		current, exists := next.Proxies[originalDomain]
 		if !exists {
 			return errRouteNotFound
@@ -593,7 +309,7 @@ func parseRouteForm(r *http.Request, current *proxy.Config) (string, *proxy.Conf
 }
 
 func (h *Handler) replaceProxy(originalDomain, domain string, cfg *proxy.Config) error {
-	return h.configs.update(func(next *config.Config) error {
+	return h.configs.Update(func(next *config.Config) error {
 		if next.Proxies == nil {
 			next.Proxies = make(map[string]*proxy.Config)
 		}
@@ -623,7 +339,7 @@ func (h *Handler) handleDeleteProxy(w http.ResponseWriter, r *http.Request) {
 
 	domain := r.FormValue("domain")
 	if domain != "" {
-		if err := h.configs.update(func(next *config.Config) error {
+		if err := h.configs.Update(func(next *config.Config) error {
 			delete(next.Proxies, domain)
 			return nil
 		}); err != nil {

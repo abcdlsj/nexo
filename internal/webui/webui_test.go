@@ -176,77 +176,6 @@ func TestRouteCollision(t *testing.T) {
 	}
 }
 
-func TestBuildRoutes(t *testing.T) {
-	t.Parallel()
-	proxies := map[string]*proxy.Config{
-		"docs.example.com": {Upstream: "http://docs:8080"},
-		"api.example.com": {
-			Upstream: "http://api:9000",
-			Auth:     true,
-			Portal:   &proxy.PortalConfig{Name: "Developer API", Description: "Internal API", Icon: "javascript:alert(1)", Group: "work", Order: 20},
-		},
-		"studio.example.com": {
-			Upstream: "http://studio:4173",
-			Portal:   &proxy.PortalConfig{Name: "Studio", Icon: "/assets/studio.svg", Order: 10},
-		},
-		"hidden.example.com": {Upstream: "http://hidden:80", Portal: &proxy.PortalConfig{Hidden: true}},
-	}
-
-	routes := buildRouteViews(proxies)
-	if len(routes) != 3 {
-		t.Fatalf("buildRouteViews() returned %d routes", len(routes))
-	}
-	wantDomains := []string{"studio.example.com", "api.example.com", "docs.example.com"}
-	for i, want := range wantDomains {
-		if routes[i].Domain != want {
-			t.Errorf("route %d domain = %q, want %q", i, routes[i].Domain, want)
-		}
-	}
-	if routes[0].IconURL != "/assets/studio.svg" || routes[0].Name != "Studio" {
-		t.Errorf("custom portal metadata not applied: %+v", routes[0])
-	}
-	if routes[1].IconURL != "" || routes[1].Policy != "OAUTH" {
-		t.Errorf("unsafe icon was not replaced or policy is wrong: %+v", routes[1])
-	}
-	if routes[2].Name != "Docs" || routes[2].Initial != "D" {
-		t.Errorf("default display metadata is wrong: %+v", routes[2])
-	}
-	if routes[2].Description != "" {
-		t.Errorf("default route retained generated description: %q", routes[2].Description)
-	}
-}
-
-func TestHiddenRoutes(t *testing.T) {
-	t.Parallel()
-	proxies := map[string]*proxy.Config{
-		"root.example.com":    {Redirect: "https://github.com/example"},
-		"legacy.example.com":  {Redirect: "https://app.example.com", Portal: &proxy.PortalConfig{Name: "Legacy"}},
-		"service.example.com": {Upstream: "http://service:8080"},
-		"example.com":         {Upstream: "http://website:8080"},
-		"published.com":       {Upstream: "http://website:8080", Portal: &proxy.PortalConfig{Name: "Published"}},
-	}
-
-	routes := buildRouteViews(proxies)
-	if len(routes) != 3 {
-		t.Fatalf("buildRouteViews() returned %d routes, want 3", len(routes))
-	}
-	for _, route := range routes {
-		if route.Domain == "root.example.com" || route.Domain == "example.com" {
-			t.Fatalf("implicit redirect or apex domain was published: %s", route.Domain)
-		}
-	}
-}
-
-func TestApexDomain(t *testing.T) {
-	t.Parallel()
-	if !isApexDomain("songjian.li") {
-		t.Fatal("songjian.li should be recognized as an apex domain")
-	}
-	if isApexDomain("api.songjian.li") || isApexDomain("service.local") {
-		t.Fatal("subdomains and non-public local names must not be treated as public apex domains")
-	}
-}
-
 func TestDiscoveryIconCache(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32
@@ -270,13 +199,6 @@ func TestDiscoveryIconCache(t *testing.T) {
 	result := discoverer.discover(context.Background(), "app.example.com", cfg)
 	if result.Kind != "WEBSITE" || result.IconContentType != "image/svg+xml" || len(result.Icon) == 0 {
 		t.Fatalf("unexpected discovery result: %+v", result)
-	}
-	routes := buildRouteViewsWithDiscovery(
-		map[string]*proxy.Config{"app.example.com": cfg},
-		map[string]routeDiscoveryResult{"app.example.com": result},
-	)
-	if len(routes) != 1 || routes[0].IconURL != "/api/route-icon?domain=app.example.com" {
-		t.Fatalf("discovered icon was not exposed through the route icon endpoint: %+v", routes)
 	}
 	before := requests.Load()
 	result = discoverer.discover(context.Background(), "app.example.com", cfg)
@@ -371,13 +293,20 @@ func TestMaskConfig(t *testing.T) {
 func TestPreview(t *testing.T) {
 	t.Parallel()
 	handler := newPreviewHandler()
-	for _, path := range []string{"/", "/proxies", "/certs", "/traffic", "/config", "/login"} {
+	for _, path := range []string{"/fleet", "/proxies", "/certs", "/traffic", "/config", "/login"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != http.StatusOK {
 			t.Errorf("GET %s returned %d: %s", path, w.Code, w.Body.String())
 		}
+	}
+
+	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rootResponse, rootRequest)
+	if rootResponse.Code != http.StatusSeeOther || rootResponse.Header().Get("Location") != "/fleet" {
+		t.Fatalf("root should redirect to fleet, got %d %q", rootResponse.Code, rootResponse.Header().Get("Location"))
 	}
 
 	r := httptest.NewRequest(http.MethodGet, "/404", nil)
