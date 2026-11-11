@@ -270,6 +270,69 @@ client certificate signed by that CA *and* a valid bearer token. Peer
 certificates are optional on the tailnet, where WireGuard already authenticates
 both ends.
 
+### Adding a node
+
+1. On the new node, install a build that includes the control plane and create
+   its two tokens (mode `0600` is enforced):
+
+   ```bash
+   sudo install -d -m 700 /etc/nexo/tokens
+   openssl rand -hex 32 | sudo install -m 600 /dev/stdin /etc/nexo/tokens/control-read
+   openssl rand -hex 32 | sudo install -m 600 /dev/stdin /etc/nexo/tokens/control-write
+   ```
+
+2. Add the node block and restart it. `id` is the identity the coordinator must
+   use; it can differ from the hostname and must stay stable.
+
+   ```yaml
+   control_plane:
+     enabled: true
+     listen: 10.0.0.13:9090        # tailnet/VPN address of the new node
+     node:
+       id: nexo-bj-01
+       name: Beijing
+     auth:
+       token_file: /etc/nexo/tokens/control-read
+       write_token_file: /etc/nexo/tokens/control-write
+   ```
+
+   ```bash
+   curl -s http://10.0.0.13:9090/control/v1/healthz
+   ```
+
+3. On the coordinator, copy the same two tokens into per-peer files and add the
+   peer to `coordinator.peers`. Copy the token values, not the files themselves:
+
+   ```bash
+   sudo install -d -m 700 /etc/nexo/peers
+   # write the new node's read and write tokens into:
+   #   /etc/nexo/peers/nexo-bj-01.read
+   #   /etc/nexo/peers/nexo-bj-01.write   (mode 0600)
+   ```
+
+   ```yaml
+   control_plane:
+     coordinator:
+       peers:
+         - id: nexo-bj-01
+           url: http://10.0.0.13:9090
+           token_file: /etc/nexo/peers/nexo-bj-01.read
+           write_token_file: /etc/nexo/peers/nexo-bj-01.write
+   ```
+
+4. Reload the coordinator (a config-file edit is picked up by the file watcher;
+   restart if the peer list does not appear) and confirm the new node turns
+   `fresh` in `/fleet`.
+
+Common failure modes:
+
+| Symptom | Cause |
+| --- | --- |
+| `identity_mismatch` | peer `id` differs from the node's `control_plane.node.id` |
+| `misconfigured` + `insecure_peer_url` | plaintext HTTP to a public address; use the tailnet address or HTTPS |
+| `misconfigured` + `missing_token` | token file missing or not mode `0600` |
+| `offline` | no route from the coordinator to the control port, or the port is not listening on the tailnet address |
+
 ### Making changes from the fleet panel
 
 The Fleet page (`/fleet`) renders the node graph, a merged route table,
