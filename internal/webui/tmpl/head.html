@@ -552,8 +552,28 @@
     .topology-service[hidden] { display: none; }
     .node-dim { opacity: .16; }
 
-    .core-stack { position: relative; z-index: 2; display: grid; gap: 8px; align-content: center; }
-    .core-stack .core-node, .core-stack .remote-node { width: 100%; }
+    .topology-canvas {
+      position: relative;
+      min-width: 680px;
+      min-height: 100%;
+      display: grid;
+      align-content: start;
+      gap: 18px;
+      padding: 22px 28px;
+    }
+    .topology-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 128px minmax(180px, 236px) minmax(0, 1fr);
+      align-items: start;
+      gap: 30px;
+    }
+    .topology-origin { padding-top: 9px; }
+    .topology-row .topology-node { width: 100%; }
+    .topology-row .topology-services { padding: 0; }
+    .gateway-empty-inline { padding: 14px 10px; color: var(--muted-foreground); font-size: 12px; }
+
     .core-node {
       border: 1px solid var(--blue);
       border-left-width: 3px;
@@ -566,7 +586,7 @@
     .core-node .topology-meta { color: var(--ink-soft); }
     .core-node .topology-icon { color: var(--blue); }
     .remote-node {
-      min-height: 44px;
+      min-height: 46px;
       grid-template-columns: 26px minmax(0, 1fr);
       padding: 7px 9px;
       border: 1px dashed var(--line-soft);

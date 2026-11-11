@@ -76,8 +76,8 @@ func fleetFixture() *control.FleetData {
 			Kind:     "Route",
 			Metadata: control.ResMeta{ID: "app.example.com", NodeID: "node-b"},
 			Spec: control.RouteSpec{
-				RouteID: "app.example.com",
-				Host:    "app.example.com",
+				RouteID: "weft.example.com",
+				Host:    "weft.example.com",
 				Kind:    "proxy",
 				Backend: control.Backend{Kind: "http", Scheme: "http", Host: "127.0.0.1", Port: 8899},
 			},
@@ -141,13 +141,13 @@ func TestDashboardShowsFleetNodes(t *testing.T) {
 		t.Fatalf("dashboard: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"core-stack", "remote-node-0", "Gateway B", "state-fresh", "topology-wire-control"} {
+	for _, want := range []string{"topology-row", "remote-node-1", "Gateway B", "state-fresh", "topology-service-1-0", "weft.example.com"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard topology missing %q", want)
 		}
 	}
-	if strings.Contains(body, "remote-node-1") {
-		t.Fatal("local node must not be duplicated as a remote card")
+	if strings.Contains(body, "remote-node-0") {
+		t.Fatal("local node must not be rendered as a remote card")
 	}
 }
 

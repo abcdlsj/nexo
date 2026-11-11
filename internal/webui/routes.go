@@ -18,16 +18,18 @@ type DashboardData struct {
 	PageData
 	Routes          []RouteView
 	ProtectedRoutes int
-	FleetNodes      []FleetNodeSummary
+	Instances       []TopologyInstance
 }
 
-// FleetNodeSummary is the topology-only view of another Nexo instance.
-type FleetNodeSummary struct {
+// TopologyInstance is one Nexo instance in the gateway graph, with the routes
+// it serves. The local instance comes first.
+type TopologyInstance struct {
+	Local    bool
 	ID       string
 	Name     string
 	State    string
-	Routes   int
 	Requests int64
+	Routes   []RouteView
 }
 
 // RouteView is the stable, presentation-only form of a configured route.
@@ -216,7 +218,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PageData: h.newPageData(r, "dashboard"),
 		Routes:   buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
 	}
-	data.FleetNodes = h.fleetNodeSummaries()
+	data.Instances = h.topologyInstances(discoveries)
 
 	for _, route := range data.Routes {
 		if route.Auth {
@@ -230,37 +232,99 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fleetNodeSummaries lists the peers a coordinator observes, for the gateway
-// topology. The local node is the topology core and is not repeated here.
-func (h *Handler) fleetNodeSummaries() []FleetNodeSummary {
+// topologyInstances builds the gateway graph: the local instance plus every
+// peer a coordinator observes, each with the routes it owns.
+func (h *Handler) topologyInstances(discoveries map[string]routeDiscoveryResult) []TopologyInstance {
+	instances := []TopologyInstance{{
+		Local:  true,
+		ID:     "local",
+		Name:   "NEXO",
+		State:  "local",
+		Routes: buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
+	}}
+
 	fleet := h.fleetSnapshot()
 	if fleet == nil {
-		return nil
+		return instances
 	}
-	nodes := make([]FleetNodeSummary, 0, len(fleet.Nodes))
+
+	peers := make([]TopologyInstance, 0, len(fleet.Nodes))
 	for _, node := range fleet.Nodes {
 		if node.State == control.StateLocal {
 			continue
 		}
-		summary := FleetNodeSummary{ID: node.PeerID, Name: node.PeerID, State: node.State}
+		instance := TopologyInstance{ID: node.PeerID, Name: node.PeerID, State: node.State}
 		if node.Snapshot != nil && node.Snapshot.Node != nil {
 			if node.Snapshot.Node.Spec.ID != "" {
-				summary.ID = node.Snapshot.Node.Spec.ID
+				instance.ID = node.Snapshot.Node.Spec.ID
 			}
 			if node.Snapshot.Node.Spec.Name != "" {
-				summary.Name = node.Snapshot.Node.Spec.Name
+				instance.Name = node.Snapshot.Node.Spec.Name
 			}
-			summary.Routes = len(node.Snapshot.Routes)
 			if node.Snapshot.Traffic != nil {
-				summary.Requests = node.Snapshot.Traffic.Status.TotalRequests
+				instance.Requests = node.Snapshot.Traffic.Status.TotalRequests
 			}
+			instance.Routes = peerRouteViews(node.Snapshot.Routes)
 		}
-		nodes = append(nodes, summary)
+		peers = append(peers, instance)
 	}
-	slices.SortFunc(nodes, func(a, b FleetNodeSummary) int {
+	slices.SortFunc(peers, func(a, b TopologyInstance) int {
 		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
-	return nodes
+	return append(instances, peers...)
+}
+
+// peerRouteViews maps remote route resources onto the same presentation type
+// the local graph uses, so the template and wires stay uniform.
+func peerRouteViews(routes []*control.Route) []RouteView {
+	views := make([]RouteView, 0, len(routes))
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		portal := route.Spec.Portal
+		if portal != nil && portal.Hidden {
+			continue
+		}
+		if route.Spec.Kind == "redirect" && portal == nil {
+			continue
+		}
+		name := defaultRouteName(route.Spec.Host)
+		if portal != nil && strings.TrimSpace(portal.Name) != "" {
+			name = portal.Name
+		}
+		kind := "SERVICE"
+		if strings.TrimSpace(route.Spec.Kind) != "" {
+			kind = strings.ToUpper(route.Spec.Kind)
+		}
+		policy := "PUBLIC"
+		if route.Spec.AuthRequired {
+			policy = "OAUTH"
+		}
+		views = append(views, RouteView{
+			Domain:  route.Spec.Host,
+			Name:    name,
+			IconURL: "",
+			Initial: routeInitial(name),
+			Group:   portalGroup(portal),
+			Target:  renderBackend(route.Spec.Backend),
+			Kind:    kind,
+			Policy:  policy,
+			Href:    "https://" + route.Spec.Host,
+			Auth:    route.Spec.AuthRequired,
+		})
+	}
+	slices.SortFunc(views, func(a, b RouteView) int {
+		return strings.Compare(a.Domain, b.Domain)
+	})
+	return views
+}
+
+func portalGroup(portal *control.PortalSummary) string {
+	if portal == nil || strings.TrimSpace(portal.Group) == "" {
+		return "default"
+	}
+	return portal.Group
 }
 
 type ProxiesData struct {

@@ -3,8 +3,7 @@
   (function () {
     var search = document.getElementById('route-search');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.gateway-route-row'));
-    var nodes = Array.prototype.slice.call(document.querySelectorAll('.topology-service'));
-    var remotes = Array.prototype.slice.call(document.querySelectorAll('.remote-node'));
+    var leaves = Array.prototype.slice.call(document.querySelectorAll('.topology-service'));
     var filters = Array.prototype.slice.call(document.querySelectorAll('.directory-filter'));
     var empty = document.getElementById('route-filter-empty');
     var activeFilter = 'all';
@@ -25,54 +24,63 @@
       return 'M ' + from.x + ' ' + from.y + ' H ' + middle + ' V ' + to.y + ' H ' + to.x;
     }
 
-    function verticalPath(from, to) {
-      return 'M ' + from.x + ' ' + from.y + ' V ' + to.y;
+    function path(className, d, id) {
+      var element = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      element.setAttribute('class', className);
+      element.setAttribute('d', d);
+      if (id) element.setAttribute('id', id);
+      return element;
     }
 
-    function attach(selector) {
-      return Array.prototype.slice.call(document.querySelectorAll(selector));
-    }
-
-    function spinePath(from, to) {
-      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('class', 'topology-wire-control');
-      path.setAttribute('d', verticalPath(from, to));
-      return path;
-    }
-
-    function setPath(selector, path) {
-      document.querySelectorAll(selector).forEach(function (wire) { wire.setAttribute('d', path); });
+    function packet(pathId, index) {
+      var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('class', 'topology-packet');
+      circle.setAttribute('r', '3');
+      var motion = document.createElementNS('http://www.w3.org/2000/svg', 'animateMotion');
+      motion.setAttribute('dur', '1.8s');
+      motion.setAttribute('begin', '-' + index + 's');
+      motion.setAttribute('repeatCount', 'indefinite');
+      var mpath = document.createElementNS('http://www.w3.org/2000/svg', 'mpath');
+      mpath.setAttribute('href', '#' + pathId);
+      motion.appendChild(mpath);
+      circle.appendChild(motion);
+      return circle;
     }
 
     function drawTopology() {
       var canvas = document.getElementById('topology-canvas');
-      var edge = document.getElementById('edge-node');
-      var core = document.getElementById('core-node');
-      if (!canvas || !edge || !core) return;
-      var canvasBox = canvas.getBoundingClientRect();
       var svg = document.getElementById('topology-wires');
+      if (!canvas || !svg) return;
+
+      var canvasBox = canvas.getBoundingClientRect();
       svg.setAttribute('viewBox', '0 0 ' + Math.max(canvas.scrollWidth, canvas.clientWidth) + ' ' + Math.max(canvas.scrollHeight, canvas.clientHeight));
-      setPath('#ingress-wire-base, #ingress-wire-live', connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(core, 'left', canvasBox)));
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-      remotes.forEach(function (node, index) {
-        setPath('.remote-wire-' + index, connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));
-      });
+      var edge = document.getElementById('edge-node');
 
-      Array.prototype.slice.call(document.querySelectorAll('.topology-wire-control')).forEach(function (wire) { wire.remove(); });
-      var previous = core;
-      remotes.forEach(function (node) {
-        var from = relativePoint(previous, 'bottom', canvasBox);
-        var to = relativePoint(node, 'top', canvasBox);
-        from.x = to.x = from.x + (to.x - from.x) / 2;
-        svg.insertBefore(spinePath(from, to), svg.firstChild);
-        previous = node;
-      });
+      Array.prototype.forEach.call(document.querySelectorAll('.topology-row'), function (row, instanceIndex) {
+        var node = row.querySelector('.core-node, .remote-node');
+        if (!node) return;
 
-      nodes.forEach(function (node) {
-        var selector = '.route-wire-' + node.dataset.routeIndex;
-        setPath(selector, connectorPath(relativePoint(core, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));
-        document.querySelectorAll(selector).forEach(function (wire) { wire.hidden = node.hidden; });
-        document.querySelectorAll('.route-packet-' + node.dataset.routeIndex).forEach(function (packet) { packet.hidden = node.hidden; });
+        if (edge) {
+          var ingress = connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(node, 'left', canvasBox));
+          if (row.querySelector('.core-node')) {
+            svg.appendChild(path('topology-wire-base', ingress));
+            svg.appendChild(path('topology-wire-live', ingress, 'ingress-wire-live-' + instanceIndex));
+            svg.appendChild(packet('ingress-wire-live-' + instanceIndex, 0));
+          } else {
+            svg.appendChild(path('topology-wire-base', ingress));
+          }
+        }
+
+        Array.prototype.forEach.call(row.querySelectorAll('.topology-service'), function (leaf, routeIndex) {
+          if (leaf.offsetParent === null) return;
+          var d = connectorPath(relativePoint(node, 'right', canvasBox), relativePoint(leaf, 'left', canvasBox));
+          var liveId = 'route-wire-live-' + instanceIndex + '-' + routeIndex;
+          svg.appendChild(path('topology-wire-base', d));
+          svg.appendChild(path('topology-wire-live', d, liveId));
+          svg.appendChild(packet(liveId, (instanceIndex + routeIndex) % 5));
+        });
       });
     }
 
@@ -84,8 +92,8 @@
         row.hidden = !match;
         if (match) visible++;
       });
-      nodes.forEach(function (node) {
-        node.hidden = !((activeFilter === 'all' || node.dataset.policy === activeFilter) && (!query || node.dataset.search.toLocaleLowerCase().includes(query)));
+      leaves.forEach(function (leaf) {
+        leaf.hidden = !((activeFilter === 'all' || leaf.dataset.policy === activeFilter) && (!query || leaf.dataset.search.toLocaleLowerCase().includes(query)));
       });
       if (empty) empty.classList.toggle('visible', visible === 0);
       requestAnimationFrame(drawTopology);
