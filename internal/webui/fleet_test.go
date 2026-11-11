@@ -142,6 +142,30 @@ func TestHomeRedirectsToFleet(t *testing.T) {
 	}
 }
 
+func TestFleetPageWithSingleLocalNode(t *testing.T) {
+	fixture := fleetFixture()
+	data := &control.FleetData{
+		GeneratedAt: fixture.GeneratedAt,
+		Nodes:       []*control.FleetNode{fixture.Nodes[0]},
+		Totals:      control.FleetTotals{Nodes: 1, Online: 1, Routes: 1},
+	}
+	handler := newFleetHandler(t, &fakeFleet{data: data})
+	rec := httptest.NewRecorder()
+	handler.handleFleet(rec, httptest.NewRequest(http.MethodGet, "/fleet", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("single-node fleet: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Gateway A", "app.example.com", "1 nodes"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("single-node fleet missing %q", want)
+		}
+	}
+	if strings.Contains(body, "remote-node") {
+		t.Fatal("a local-only fleet must not render remote cards")
+	}
+}
+
 func TestFleetPageWithoutControlPlane(t *testing.T) {
 	handler := newFleetHandler(t, nil)
 	rec := httptest.NewRecorder()
