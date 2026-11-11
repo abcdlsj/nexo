@@ -29,7 +29,10 @@ const (
 // CommandRequest is the write surface of the control plane. A coordinator
 // forwards it verbatim; only the target node applies it.
 type CommandRequest struct {
-	Kind           string          `json:"kind"`
+	Kind string `json:"kind"`
+	// TargetNodeID routes the command through a coordinator. Empty means the
+	// node that received the request.
+	TargetNodeID   string          `json:"target_node_id,omitempty"`
 	RouteID        string          `json:"route_id,omitempty"`
 	Route          *RouteChange    `json:"route,omitempty"`
 	Security       *SecurityChange `json:"security,omitempty"`
@@ -93,7 +96,23 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source := strings.TrimSpace(r.Header.Get("X-Nexo-Node-Id"))
-	result := s.applyLocal(req, requestIDFrom(w), source)
+	target := strings.TrimSpace(req.TargetNodeID)
+	var result *CommandResult
+	if target == "" || target == s.node.ID {
+		result = s.applyLocal(req, requestIDFrom(w), source)
+	} else {
+		forwarded, err := s.Execute(target, req)
+		if err != nil {
+			apiErr := toAPIError(err)
+			status := http.StatusBadGateway
+			if apiErr.Code == "unknown_node" {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, requestIDFrom(w), apiErr)
+			return
+		}
+		result = forwarded
+	}
 
 	status := http.StatusOK
 	switch result.Status {
@@ -136,6 +155,7 @@ func (s *Server) Execute(nodeID string, req CommandRequest) (*CommandResult, err
 		return nil, &APIError{Code: "missing_token", Message: "peer has no write_token_file configured"}
 	}
 
+	req.TargetNodeID = ""
 	result, err := s.forwardCommand(peer.cfg, req)
 	if err != nil {
 		return nil, err

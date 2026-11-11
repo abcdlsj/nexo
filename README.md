@@ -229,7 +229,7 @@ Machine API (`/control/v1`, bearer token, JSON):
 | GET | `/snapshot?include=…&recent_limit=…` | one consistent node snapshot |
 | GET | `/resources/{kind}[/{id}]` | routes, certificates, traffic, security, links |
 | GET | `/fleet/snapshot` | coordinator view (local + peers + warnings) |
-| POST | `/commands` | apply `route.upsert`, `route.delete`, `certificate.renew`, `security.update` |
+| POST | `/commands` | apply `route.upsert`, `route.delete`, `certificate.renew`, `security.update`; add `target_node_id` to forward through a coordinator |
 
 The snapshot never carries API tokens, passwords, key material or upstream
 paths. Traffic aggregates are per node; unique IP counts are explicitly not

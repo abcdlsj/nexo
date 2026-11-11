@@ -356,6 +356,44 @@ func TestRouteUpsertValidation(t *testing.T) {
 	}
 }
 
+func TestCommandForwardingToPeer(t *testing.T) {
+	peerStore := &testStore{cfg: baseConfig()}
+	_, peerHandler := newTestServer(t, peerStore)
+	peer := httptest.NewServer(peerHandler)
+	defer peer.Close()
+
+	hubStore := &testStore{cfg: baseConfig()}
+	hub, hubHandler := newTestServer(t, hubStore)
+	dir := t.TempDir()
+	readTokenPath := writeToken(t, dir, "read-token")
+	writeTokenPath := writeToken(t, dir, "write-token")
+
+	hub.fed.syncPeers([]config.ControlPeerConfig{{
+		ID:             "peer-node",
+		URL:            peer.URL,
+		TokenFile:      readTokenPath,
+		WriteTokenFile: writeTokenPath,
+	}})
+
+	body := `{"kind":"route.upsert","target_node_id":"peer-node","route_id":"forwarded.example.com","route":{"host":"forwarded.example.com","upstream":"http://127.0.0.1:8080"}}`
+	rec := doRequest(t, hubHandler, http.MethodPost, "/control/v1/commands", "write-token", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("forward: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := peerStore.get().Proxies["forwarded.example.com"]; !ok {
+		t.Fatal("peer did not apply the forwarded command")
+	}
+	if _, ok := hubStore.get().Proxies["forwarded.example.com"]; ok {
+		t.Fatal("hub applied a command addressed to a peer")
+	}
+
+	rec = doRequest(t, hubHandler, http.MethodPost, "/control/v1/commands", "write-token",
+		`{"kind":"route.upsert","target_node_id":"missing","route_id":"x.example.com","route":{"host":"x.example.com","upstream":"http://127.0.0.1:1"}}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown target: got %d", rec.Code)
+	}
+}
+
 func TestFederationStates(t *testing.T) {
 	store := &testStore{cfg: baseConfig()}
 	ctl, server := newTestServer(t, store)
