@@ -301,7 +301,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, Envelope{
 		APIVersion: APIVersion,
 		Kind:       "Health",
-		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, GeneratedAt: time.Now().UTC()},
+		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, GeneratedAt: time.Now().UTC(), ObservedAt: time.Now().UTC()},
 		Data:       map[string]string{"status": "ok"},
 	})
 }
@@ -315,7 +315,7 @@ func (s *Server) handleNode(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, Envelope{
 		APIVersion: APIVersion,
 		Kind:       "Node",
-		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, ConfigHash: snapshot.Node.Status.ConfigHash, GeneratedAt: time.Now().UTC()},
+		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, ConfigHash: snapshot.Node.Status.ConfigHash, GeneratedAt: time.Now().UTC(), ObservedAt: time.Now().UTC()},
 		Data:       snapshot.Node,
 	})
 }
@@ -328,7 +328,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, Envelope{
 		APIVersion: APIVersion,
 		Kind:       "Capabilities",
-		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, GeneratedAt: time.Now().UTC()},
+		Meta:       Meta{RequestID: requestIDFrom(w), NodeID: s.node.ID, GeneratedAt: time.Now().UTC(), ObservedAt: time.Now().UTC()},
 		Data: map[string]any{
 			"resources": []string{"Node", "Route", "Certificate", "TrafficSummary", "Security", "Link"},
 			"features":  []string{"etag", "redacted_traffic", "fleet_snapshot", "commands"},

@@ -387,6 +387,22 @@ func TestCommandForwardingToPeer(t *testing.T) {
 		t.Fatal("hub applied a command addressed to a peer")
 	}
 
+	// A peer rejection keeps the peer's own status and error code.
+	rec = doRequest(t, hubHandler, http.MethodPost, "/control/v1/commands", "write-token",
+		`{"kind":"route.upsert","target_node_id":"peer-node","route_id":"forwarded.example.com","if_match":"stale","route":{"host":"forwarded.example.com","upstream":"http://127.0.0.1:8080"}}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("peer conflict was masked: got %d %s", rec.Code, rec.Body.String())
+	}
+	var conflict struct {
+		Data CommandResult `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict.Data.Status != CommandConflict {
+		t.Fatalf("unexpected forwarded result: %+v", conflict.Data)
+	}
+
 	rec = doRequest(t, hubHandler, http.MethodPost, "/control/v1/commands", "write-token",
 		`{"kind":"route.upsert","target_node_id":"missing","route_id":"x.example.com","route":{"host":"x.example.com","upstream":"http://127.0.0.1:1"}}`)
 	if rec.Code != http.StatusNotFound {

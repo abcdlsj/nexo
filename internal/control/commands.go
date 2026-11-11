@@ -221,17 +221,22 @@ func (s *Server) forwardCommand(peer config.ControlPeerConfig, req CommandReques
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return nil, fmt.Errorf("peer returned invalid JSON (status %d)", resp.StatusCode)
 	}
+
+	// A rejected command still carries a CommandResult (conflict, invalid), so
+	// the caller can surface the node's own error instead of a generic failure.
+	if len(envelope.Data) > 0 {
+		var result CommandResult
+		if err := json.Unmarshal(envelope.Data, &result); err == nil && result.Status != "" {
+			return &result, nil
+		}
+	}
 	if resp.StatusCode >= 400 {
 		if envelope.Error != nil {
 			return nil, envelope.Error
 		}
 		return nil, &APIError{Code: "peer_error", Message: fmt.Sprintf("peer returned status %d", resp.StatusCode)}
 	}
-	var result CommandResult
-	if err := json.Unmarshal(envelope.Data, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return nil, &APIError{Code: "peer_error", Message: "peer returned no command result"}
 }
 
 func (s *Server) applyLocal(req CommandRequest, requestID, sourceNode string) *CommandResult {
