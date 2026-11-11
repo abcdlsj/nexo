@@ -33,15 +33,23 @@
     .fleet-node-action a:hover { border-color: var(--blue); color: var(--blue); text-decoration: none; }
     .fleet-meta .warn, .fleet-meta.warn { color: var(--coral); }
     .fleet-leaves { display: grid; gap: 4px; }
-    .fleet-leaf { display: grid; grid-template-columns: 18px minmax(150px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
+    .fleet-leaf { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: stretch; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); }
+    .fleet-leaf-main { display: grid; grid-template-columns: 18px minmax(150px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 0 7px 10px; color: inherit; text-decoration: none; }
+    .fleet-leaf-open { display: grid; place-items: center; color: var(--ink-soft); opacity: 0; pointer-events: none; text-decoration: none; transition: opacity .12s ease; }
+    .fleet-leaf-open svg { width: 13px; height: 13px; }
+    .fleet-leaf:hover .fleet-leaf-open, .fleet-leaf:focus-within .fleet-leaf-open { opacity: 1; pointer-events: auto; }
+    .fleet-leaf-open:hover { color: var(--blue); text-decoration: none; }
     .fleet-leaf-icon { position: relative; width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 11px/1 var(--mono-font); font-weight: 700; text-transform: uppercase; }
     .fleet-leaf-icon img { position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); object-fit: contain; background: var(--paper); }
-    .fleet-leaf:hover { border-color: var(--line-soft); background: var(--blue-soft); text-decoration: none; }
+    .fleet-leaf:hover, .fleet-leaf:focus-within { border-color: var(--line-soft); background: var(--blue-soft); }
     .fleet-leaf-host { overflow: hidden; font: 13px/1.4 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 12px/1.4 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .fleet-leaf-tags { display: flex; gap: 4px; }
     .fleet-leaf-tags i { padding: 1px 5px; border: 0; border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 11px/1.5 var(--mono-font); font-style: normal; text-transform: uppercase; }
     .fleet-leaf-tags i.bad { background: var(--coral-soft); color: var(--coral); }
+    @media (hover: none) {
+      .fleet-leaf-open { opacity: .6; pointer-events: auto; }
+    }
     .fleet-empty { padding: 10px; color: var(--ink-soft); font-size: 12px; }
     .fleet-section { margin-top: 26px; }
     .fleet-section > h2 { margin-bottom: 8px; font-size: 14px; }
@@ -69,7 +77,7 @@
       .fleet-stamp { display: none; }
       .fleet-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
       .fleet-origin, .fleet-wires { display: none; }
-      .fleet-leaf { grid-template-columns: 18px minmax(0, 1fr) auto; }
+      .fleet-leaf-main { grid-template-columns: 18px minmax(0, 1fr) auto; }
       .fleet-leaf-target { display: none; }
     }
   </style>
@@ -124,16 +132,21 @@
         </div>
         <div class="fleet-leaves">
           {{range $j, $r := $n.Routes}}
-          <a class="fleet-leaf" id="fleet-leaf-{{$i}}-{{$j}}" data-node-index="{{$i}}" href="/fleet/route?node={{$n.ID}}&host={{$r.Host}}">
-            <span class="fleet-leaf-icon">{{template "route_icon" $r}}</span>
-            <span class="fleet-leaf-host">{{$r.Host}}</span>
-            <span class="fleet-leaf-target">{{$r.Target}}</span>
-            <span class="fleet-leaf-tags">
-              {{if $r.Auth}}<i>oauth</i>{{end}}
-              {{if $r.CertMissing}}<i class="bad">no cert</i>{{else if lt $r.CertDays 30}}<i class="bad">cert {{$r.CertDays}}d</i>{{end}}
-              {{if eq $r.Source "docker"}}<i>docker</i>{{end}}
-            </span>
-          </a>
+          <div class="fleet-leaf" data-node-index="{{$i}}" data-search="{{$r.Name}} {{$r.Host}}">
+            <a class="fleet-leaf-main" id="fleet-leaf-{{$i}}-{{$j}}" href="/fleet/route?node={{$n.ID}}&host={{$r.Host}}">
+              <span class="fleet-leaf-icon">{{template "route_icon" $r}}</span>
+              <span class="fleet-leaf-host">{{$r.Host}}</span>
+              <span class="fleet-leaf-target">{{$r.Target}}</span>
+              <span class="fleet-leaf-tags">
+                {{if $r.Auth}}<i>oauth</i>{{end}}
+                {{if $r.CertMissing}}<i class="bad">no cert</i>{{else if lt $r.CertDays 30}}<i class="bad">cert {{$r.CertDays}}d</i>{{end}}
+                {{if eq $r.Source "docker"}}<i>docker</i>{{end}}
+              </span>
+            </a>
+            <a class="fleet-leaf-open" href="https://{{$r.Host}}" target="_blank" rel="noopener noreferrer" aria-label="Open {{$r.Host}} in a new tab" title="Open {{$r.Host}}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
+            </a>
+          </div>
           {{else}}
           <div class="fleet-empty">No routes reported</div>
           {{end}}

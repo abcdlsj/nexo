@@ -126,7 +126,7 @@ func TestFleetPageRenders(t *testing.T) {
 		t.Fatalf("fleet page: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Gateway A", "Gateway B", "app.nexo.local", "duplicate_domain", "expiring", `/api/route-icon?domain=app.nexo.local`, "fleet-leaf-icon"} {
+	for _, want := range []string{"Gateway A", "Gateway B", "app.nexo.local", "duplicate_domain", "expiring", `/api/route-icon?domain=app.nexo.local`, "fleet-leaf-icon", "fleet-leaf-open", `href="https://app.nexo.local"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("fleet page missing %q", want)
 		}
