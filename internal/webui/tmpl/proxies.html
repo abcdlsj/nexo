@@ -4,7 +4,7 @@
 
   <div class="container">
     <details class="route-composer card" id="add-route">
-      <summary><strong>Add route</strong></summary>
+      <summary><strong>Add route</strong><span class="composer-meta">{{len .Proxies}} {{plural (len .Proxies) "route" "routes"}}{{if .DockerRoutes}} · {{len .DockerRoutes}} from containers{{end}}</span></summary>
       <div class="composer-body">{{template "route_form" .CreateEditor}}</div>
     </details>
 

@@ -11,6 +11,8 @@
     .fleet-form .row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .fleet-form .actions { display: flex; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
     .fleet-form .actions form { margin: 0; }
+    .fleet-danger-row { display: flex; justify-content: flex-end; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+    .fleet-danger-row form { margin: 0; }
     .fleet-note { padding: 9px 11px; border-left: 3px solid var(--blue); background: var(--wash); color: var(--ink-soft); font-size: 12px; }
     .fleet-note.bad { border-left-color: var(--coral); color: var(--coral); }
   </style>
@@ -63,14 +65,16 @@
     </form>
 
     {{if .Host}}
+    <div class="fleet-danger-row">
     <form method="POST" action="/fleet/route/delete" onsubmit="return confirm('Delete this route on {{.NodeName}}?')">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="node" value="{{.NodeID}}">
       <input type="hidden" name="host" value="{{.Host}}">
       <input type="hidden" name="if_match" value="{{.ConfigHash}}">
       <input type="hidden" name="portal_icon" value="{{.PortalIcon}}">
-      <button type="submit" class="btn btn-danger btn-sm">Delete route</button>
+      <button type="submit" class="btn btn-danger-quiet btn-sm">Delete route</button>
     </form>
+    </div>
     {{end}}
   </main>
 </body>

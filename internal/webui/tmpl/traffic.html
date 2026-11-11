@@ -18,7 +18,7 @@
       </div>
       <div class="table-scroll">
         <table id="domainTable">
-          <thead><tr><th>Domain</th><th>Requests</th><th>HTTPS</th><th>Unique IPs</th></tr></thead>
+          <thead><tr><th>Domain</th><th class="num">Requests</th><th class="num">HTTPS</th><th class="num">Unique IPs</th></tr></thead>
           <tbody id="domainTableBody"></tbody>
         </table>
       </div>
@@ -46,8 +46,9 @@
     function formatNumber(value) { return Number(value || 0).toLocaleString(); }
     function formatPercent(value) { return (Number(value || 0) * 100).toFixed(1) + '%'; }
     function formatTime(value) { return new Date(value).toLocaleTimeString(); }
-    function appendCell(row, value) {
+    function appendCell(row, value, numeric) {
       var cell = document.createElement('td');
+      if (numeric) cell.className = 'num';
       cell.textContent = String(value == null ? '' : value);
       row.appendChild(cell);
       return cell;
@@ -83,9 +84,9 @@
       var rows = domains.map(function (domain) {
         var row = document.createElement('tr');
         appendCell(row, domain.domain);
-        appendCell(row, formatNumber(domain.requests));
-        appendCell(row, formatPercent(domain.requests > 0 ? domain.https_count / domain.requests : 0));
-        appendCell(row, formatNumber(domain.unique_ips));
+        appendCell(row, formatNumber(domain.requests), true);
+        appendCell(row, formatPercent(domain.requests > 0 ? domain.https_count / domain.requests : 0), true);
+        appendCell(row, formatNumber(domain.unique_ips), true);
         return row;
       });
       replaceChildrenWithRows(document.getElementById('domainTableBody'), rows);

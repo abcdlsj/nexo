@@ -3,9 +3,9 @@
   {{template "nav" .}}
 
   <div class="container">
-    <div class="grid-2">
+    <div class="settings-page">
       <!-- Basic Settings -->
-      <div class="card">
+      <div class="card card-form">
         <h3 style="margin-bottom: 1rem;">Basic Settings</h3>
         <form method="POST" action="/config/update">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -34,7 +34,7 @@
       </div>
 
       <!-- Cloudflare Settings -->
-      <div class="card">
+      <div class="card card-form mt-4">
         <h3 style="margin-bottom: 1rem;">Cloudflare Settings</h3>
         <form method="POST" action="/config/update">
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -47,7 +47,7 @@
             <input type="password" id="api_token" name="api_token" placeholder="Enter new API token to change" style="width: 100%;">
             <p class="text-sm text-muted" style="margin-top: 0.25rem;">Required permissions: Zone - DNS - Edit, Zone - Zone - Read</p>
           </div>
-          <button type="submit" class="btn btn-primary">
+          <button type="submit" class="btn btn-secondary">
             <svg class="icon-sm" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -57,7 +57,6 @@
           </button>
         </form>
       </div>
-    </div>
 
     <!-- OAuth Settings -->
     {{if .Config.Auth.GitHub.ClientID}}
@@ -189,6 +188,7 @@
         </button>
       </div>
       <pre class="config-yaml" style="background-color: var(--muted); padding: 1rem; border-radius: var(--radius); overflow-x: auto; font-size: 0.8125rem;"><code>{{.RawConfig}}</code></pre>
+    </div>
     </div>
   </div>
 

@@ -3,9 +3,9 @@
   {{template "nav" .}}
   <style>
     .fleet-page { display: block; }
-    .fleet-head { min-height: 42px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); }
-    .fleet-head h1 { font-size: 15px; }
-    .fleet-head .fleet-summary { margin-left: auto; color: var(--ink-soft); font-size: 12px; }
+    .fleet-head { min-height: 40px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); }
+    .fleet-head .fleet-summary { color: var(--ink-soft); font-size: 13px; }
+    .fleet-stamp { margin-left: auto; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); }
     .fleet-canvas { position: relative; display: grid; gap: 14px; padding: 22px 0 26px; }
     .fleet-wires { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
     .fleet-wire { fill: none; stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -23,37 +23,48 @@
     .fleet-node-head .nexo-mark { width: 14px; height: 14px; flex: none; }
     .fleet-node-name { color: var(--ink); font-size: 13px; font-weight: 700; text-decoration: none; }
     .fleet-node-name:hover { color: var(--blue); }
-    .fleet-state { margin-left: auto; padding: 0 5px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 10px/1.6 var(--mono-font); text-transform: uppercase; }
+    .fleet-state { margin-left: auto; padding: 1px 6px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 11px/1.6 var(--mono-font); text-transform: uppercase; }
     .fleet-state.fresh, .fleet-state.local { color: var(--green); border-color: var(--green); }
     .fleet-state.stale { color: #9a6b00; border-color: var(--yellow); }
     .fleet-state.offline, .fleet-state.identity_mismatch, .fleet-state.misconfigured { color: var(--coral); border-color: var(--coral); }
-    .fleet-meta { margin-top: 4px; overflow: hidden; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); text-overflow: ellipsis; }
-    .fleet-meta .warn { color: var(--coral); }
+    .fleet-meta { margin-top: 4px; overflow: hidden; color: var(--ink-soft); font: 13px/1.5 var(--mono-font); text-overflow: ellipsis; }
+    .fleet-node-action { margin-top: 7px; }
+    .fleet-node-action a { display: inline-flex; min-height: 24px; align-items: center; padding: 0 7px; border: 1px solid var(--line-soft); color: var(--ink); font-size: 12px; text-decoration: none; }
+    .fleet-node-action a:hover { border-color: var(--blue); color: var(--blue); text-decoration: none; }
+    .fleet-meta .warn, .fleet-meta.warn { color: var(--coral); }
     .fleet-leaves { display: grid; gap: 4px; }
     .fleet-leaf { display: grid; grid-template-columns: 18px minmax(150px, 1.1fr) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid transparent; border-bottom-color: var(--line-soft); color: var(--ink); text-decoration: none; }
-    .fleet-leaf-icon { position: relative; width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 9px/1 var(--mono-font); font-weight: 700; text-transform: uppercase; }
+    .fleet-leaf-icon { position: relative; width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 11px/1 var(--mono-font); font-weight: 700; text-transform: uppercase; }
     .fleet-leaf-icon img { position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); object-fit: contain; background: var(--paper); }
     .fleet-leaf:hover { border-color: var(--line-soft); background: var(--blue-soft); text-decoration: none; }
-    .fleet-leaf-host { overflow: hidden; font: 12px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
-    .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 11px/1.3 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
+    .fleet-leaf-host { overflow: hidden; font: 13px/1.4 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
+    .fleet-leaf-target { overflow: hidden; color: var(--ink-soft); font: 12px/1.4 var(--mono-font); text-overflow: ellipsis; white-space: nowrap; }
     .fleet-leaf-tags { display: flex; gap: 4px; }
-    .fleet-leaf-tags i { padding: 0 4px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 10px/1.5 var(--mono-font); font-style: normal; text-transform: uppercase; }
-    .fleet-leaf-tags i.bad { color: var(--coral); border-color: var(--coral); }
+    .fleet-leaf-tags i { padding: 1px 5px; border: 0; border-radius: 2px; background: var(--wash); color: var(--ink-soft); font: 11px/1.5 var(--mono-font); font-style: normal; text-transform: uppercase; }
+    .fleet-leaf-tags i.bad { background: var(--coral-soft); color: var(--coral); }
     .fleet-empty { padding: 10px; color: var(--ink-soft); font-size: 12px; }
     .fleet-section { margin-top: 26px; }
     .fleet-section > h2 { margin-bottom: 8px; font-size: 14px; }
     .fleet-warnings { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-    .fleet-warnings li { padding: 7px 10px; border-left: 3px solid var(--yellow); background: var(--wash); font-size: 12px; }
-    .fleet-warnings code { margin-right: 8px; background: transparent; border: 0; color: var(--ink-soft); }
+    .fleet-warnings li { padding: 8px 10px; border-left: 3px solid var(--yellow); background: var(--wash); font-size: 12px; line-height: 1.5; }
+    .fleet-warnings code { margin-right: 8px; background: transparent; border: 0; color: var(--ink-soft); font-size: 11px; }
     .fleet-links { display: grid; gap: 4px; }
     .fleet-link { display: grid; grid-template-columns: minmax(0, 1fr) 90px minmax(0, 1fr) auto; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); font: 12px/1.4 var(--mono-font); }
-    .fleet-link .state { color: var(--ink-soft); text-transform: uppercase; font-size: 10px; }
+    .fleet-link .state { color: var(--ink-soft); text-transform: uppercase; font-size: 11px; }
     .fleet-link .state.connected { color: var(--green); }
     .fleet-link .state.unknown_endpoint { color: var(--coral); }
-    .fleet-hint { max-width: 70ch; color: var(--ink-soft); font-size: 12px; }
-    .fleet-hint pre { margin-top: 10px; padding: 12px; border: 1px solid var(--line-soft); background: var(--paper); overflow: auto; font: 11px/1.6 var(--mono-font); }
-    .fleet-footer { margin-top: 22px; color: var(--ink-soft); font: 11px/1.5 var(--mono-font); }
+    .fleet-setup { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 560px); gap: 32px; align-items: start; }
+    .fleet-hint { max-width: 70ch; color: var(--ink-soft); font-size: 13px; line-height: 1.55; }
+    .fleet-hint + .fleet-hint { margin-top: 10px; }
+    .fleet-setup pre { margin: 0; padding: 14px; border: 1px solid var(--line-soft); background: var(--paper); overflow-x: auto; font: 12px/1.7 var(--mono-font); }
     @media (max-width: 900px) {
+      .fleet-stamp { display: none; }
+      .fleet-setup { grid-template-columns: 1fr; gap: 16px; }
+      .fleet-setup pre { white-space: pre-wrap; word-break: break-word; }
+    }
+    .fleet-footer { margin-top: 22px; color: var(--ink-soft); font: 12px/1.5 var(--mono-font); }
+    @media (max-width: 900px) {
+      .fleet-stamp { display: none; }
       .fleet-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
       .fleet-origin, .fleet-wires { display: none; }
       .fleet-leaf { grid-template-columns: 18px minmax(0, 1fr) auto; }
@@ -63,10 +74,12 @@
 
   <main class="container fleet-page">
     {{if .Notice}}
-    <div class="fleet-head"><h1>Fleet</h1></div>
-    <section class="fleet-section">
-      <p class="fleet-hint">{{.Notice}}</p>
-      <p class="fleet-hint">Prefer the tailnet address for peers; a public address requires HTTPS and a mode-0600 token file.</p>
+    <div class="fleet-head"><p class="fleet-summary">Control plane is not enabled on this node.</p></div>
+    <section class="fleet-section fleet-setup">
+      <div>
+        <p class="fleet-hint">{{.Notice}}</p>
+        <p class="fleet-hint">Prefer the tailnet address for peers; a public address requires HTTPS and a mode-0600 token file.</p>
+      </div>
       <pre>control_plane:
   enabled: true
   listen: 100.x.y.z:9090
@@ -83,8 +96,8 @@
     </section>
     {{else if .View}}
     <div class="fleet-head">
-      <h1>Fleet</h1>
-      <p class="fleet-summary">{{.View.Totals.Nodes}} nodes · {{.View.Totals.Online}} online · {{.View.Totals.Routes}} routes · {{.View.Totals.Requests}} requests{{if .View.Totals.Expiring}} · {{.View.Totals.Expiring}} certs expiring{{end}}</p>
+      <p class="fleet-summary">{{.View.Totals.Nodes}} {{plural .View.Totals.Nodes "node" "nodes"}} · {{.View.Totals.Online}} online · {{.View.Totals.Routes}} {{plural .View.Totals.Routes "route" "routes"}} · {{.View.Totals.Requests}} requests{{if .View.Totals.Expiring}} · {{.View.Totals.Expiring}} certs expiring{{end}}{{if not .View.Coordinator}} · coordinator disabled{{end}}</p>
+      <span class="fleet-stamp">generated {{.View.GeneratedAt}}</span>
     </div>
 
     <div class="fleet-canvas" id="fleet-canvas">
@@ -102,9 +115,11 @@
             <a class="fleet-node-name" href="/fleet/node?id={{$n.ID}}">{{if $n.Name}}{{$n.Name}}{{else}}{{$n.ID}}{{end}}</a>
             <span class="fleet-state {{$n.State}}">{{$n.State}}</span>
           </div>
-          <div class="fleet-meta">{{short $n.ID}} · v{{$n.Version}}{{if $n.Uptime}} · up {{$n.Uptime}}{{end}}{{if ne $n.Latency "—"}} · {{$n.Latency}}{{end}}</div>
-          <div class="fleet-meta">{{len $n.Routes}} routes · {{$n.Requests}} req{{if $n.CertExpiring}} · <span class="warn">{{$n.CertExpiring}} cert expiring</span>{{end}}{{if $n.Error}} · <span class="warn">{{$n.Error}}</span>{{end}}</div>
-          {{if $n.ID}}<div class="fleet-meta"><a href="/fleet/route?node={{$n.ID}}">＋ add route</a></div>{{end}}
+          <div class="fleet-meta">{{short $n.ID}} · {{$n.Version}}{{if $n.Uptime}} · up {{$n.Uptime}}{{end}}</div>
+          <div class="fleet-meta">{{len $n.Routes}} {{plural (len $n.Routes) "route" "routes"}} · {{$n.Requests}} req</div>
+          {{if $n.CertExpiring}}<div class="fleet-meta warn">{{$n.CertExpiring}} cert expiring</div>{{end}}
+          {{if $n.Error}}<div class="fleet-meta warn">{{$n.Error}}</div>{{end}}
+          {{if $n.ID}}<div class="fleet-node-action"><a href="/fleet/route?node={{$n.ID}}">Add route</a></div>{{end}}
         </div>
         <div class="fleet-leaves">
           {{range $j, $r := $n.Routes}}
@@ -169,7 +184,6 @@
       </div>
     </section>
 
-    <p class="fleet-footer">Generated {{.View.GeneratedAt}}{{if not .View.Coordinator}} · coordinator disabled, showing local node only{{end}}</p>
     {{end}}
   </main>
 

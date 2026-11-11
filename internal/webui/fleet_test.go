@@ -38,10 +38,10 @@ func fleetFixture() *control.FleetData {
 		},
 		Routes: []*control.Route{{
 			Kind:     "Route",
-			Metadata: control.ResMeta{ID: "app.example.com", NodeID: "node-a"},
+			Metadata: control.ResMeta{ID: "app.nexo.local", NodeID: "node-a"},
 			Spec: control.RouteSpec{
-				RouteID: "app.example.com",
-				Host:    "app.example.com",
+				RouteID: "app.nexo.local",
+				Host:    "app.nexo.local",
 				Kind:    "proxy",
 				Backend: control.Backend{Kind: "http", Scheme: "http", Host: "127.0.0.1", Port: 3000},
 				Source:  "config",
@@ -49,8 +49,8 @@ func fleetFixture() *control.FleetData {
 		}},
 		Certificates: []*control.Certificate{{
 			Kind:     "Certificate",
-			Metadata: control.ResMeta{ID: "*.example.com", NodeID: "node-a"},
-			Spec:     control.CertSpec{Domain: "*.example.com", Wildcard: true},
+			Metadata: control.ResMeta{ID: "*.nexo.local", NodeID: "node-a"},
+			Spec:     control.CertSpec{Domain: "*.nexo.local", Wildcard: true},
 			Status:   control.CertStat{State: "expiring", DaysLeft: 12},
 		}},
 		Traffic: &control.Traffic{
@@ -74,10 +74,10 @@ func fleetFixture() *control.FleetData {
 		},
 		Routes: []*control.Route{{
 			Kind:     "Route",
-			Metadata: control.ResMeta{ID: "app.example.com", NodeID: "node-b"},
+			Metadata: control.ResMeta{ID: "app.nexo.local", NodeID: "node-b"},
 			Spec: control.RouteSpec{
-				RouteID: "weft.example.com",
-				Host:    "weft.example.com",
+				RouteID: "weft.nexo.local",
+				Host:    "weft.nexo.local",
 				Kind:    "proxy",
 				Backend: control.Backend{Kind: "http", Scheme: "http", Host: "127.0.0.1", Port: 8899},
 			},
@@ -95,8 +95,8 @@ func fleetFixture() *control.FleetData {
 			Kind:     "Link",
 			Metadata: control.ResMeta{ID: "a-to-b"},
 			Spec: control.LinkSpec{
-				From: control.LinkEndpoint{NodeID: "node-a", RouteID: "app.example.com"},
-				To:   control.LinkEndpoint{NodeID: "node-b", RouteID: "app.example.com"},
+				From: control.LinkEndpoint{NodeID: "node-a", RouteID: "app.nexo.local"},
+				To:   control.LinkEndpoint{NodeID: "node-b", RouteID: "app.nexo.local"},
 			},
 			Status: control.LinkStat{State: "connected"},
 		}},
@@ -126,7 +126,7 @@ func TestFleetPageRenders(t *testing.T) {
 		t.Fatalf("fleet page: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Gateway A", "Gateway B", "app.example.com", "duplicate_domain", "21 ms", "expiring", `/api/route-icon?domain=app.example.com`, "fleet-leaf-icon"} {
+	for _, want := range []string{"Gateway A", "Gateway B", "app.nexo.local", "duplicate_domain", "expiring", `/api/route-icon?domain=app.nexo.local`, "fleet-leaf-icon"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("fleet page missing %q", want)
 		}
@@ -156,7 +156,7 @@ func TestFleetPageWithSingleLocalNode(t *testing.T) {
 		t.Fatalf("single-node fleet: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Gateway A", "app.example.com", "1 nodes"} {
+	for _, want := range []string{"Gateway A", "app.nexo.local", "1 node"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("single-node fleet missing %q", want)
 		}
@@ -172,7 +172,7 @@ func TestFleetRouteIcons(t *testing.T) {
 		Routes: []*control.Route{
 			{Spec: control.RouteSpec{Host: "a.example.com", Portal: &control.PortalSummary{Icon: "/assets/a.svg"}}},
 			{Spec: control.RouteSpec{Host: "b.example.com"}},
-			{Spec: control.RouteSpec{Host: "c.example.com", Portal: &control.PortalSummary{Icon: "https://cdn.example.com/c.png"}}},
+			{Spec: control.RouteSpec{Host: "c.example.com", Portal: &control.PortalSummary{Icon: "https://cdn.nexo.local/c.png"}}},
 		},
 	}
 	local := buildNodeView(&control.FleetNode{State: control.StateLocal, Snapshot: snapshot})
@@ -189,7 +189,7 @@ func TestFleetRouteIcons(t *testing.T) {
 	if icons["b.example.com"] != "/api/route-icon?domain=b.example.com" {
 		t.Fatalf("local fallback icon wrong: %q", icons["b.example.com"])
 	}
-	if icons["c.example.com"] != "https://cdn.example.com/c.png" {
+	if icons["c.example.com"] != "https://cdn.nexo.local/c.png" {
 		t.Fatalf("absolute portal icon not used: %q", icons["c.example.com"])
 	}
 
@@ -201,7 +201,7 @@ func TestFleetRouteIcons(t *testing.T) {
 	if remoteIcons["a.example.com"] != "" {
 		t.Fatalf("relative icon must not leak to a peer card: %q", remoteIcons["a.example.com"])
 	}
-	if remoteIcons["c.example.com"] != "https://cdn.example.com/c.png" {
+	if remoteIcons["c.example.com"] != "https://cdn.nexo.local/c.png" {
 		t.Fatalf("absolute icon should be kept on peers: %q", remoteIcons["c.example.com"])
 	}
 }
@@ -220,7 +220,7 @@ func TestFleetRouteFormAndSave(t *testing.T) {
 	handler := newFleetHandler(t, provider)
 
 	rec := httptest.NewRecorder()
-	handler.handleFleetRoute(rec, httptest.NewRequest(http.MethodGet, "/fleet/route?node=node-a&host=app.example.com", nil))
+	handler.handleFleetRoute(rec, httptest.NewRequest(http.MethodGet, "/fleet/route?node=node-a&host=app.nexo.local", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("route form: %d %s", rec.Code, rec.Body.String())
 	}
@@ -228,7 +228,7 @@ func TestFleetRouteFormAndSave(t *testing.T) {
 		t.Fatal("route form missing prefilled upstream or config hash")
 	}
 
-	form := strings.NewReader("node=node-a&host=app.example.com&upstream=http%3A%2F%2F127.0.0.1%3A3001&if_match=hash-local&auth=on")
+	form := strings.NewReader("node=node-a&host=app.nexo.local&upstream=http%3A%2F%2F127.0.0.1%3A3001&if_match=hash-local&auth=on")
 	req := httptest.NewRequest(http.MethodPost, "/fleet/route/save", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = httptest.NewRecorder()
@@ -255,7 +255,7 @@ func TestFleetNodePageRenders(t *testing.T) {
 		t.Fatalf("node page: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"*.example.com", "Rate limit requests", "hash-local"} {
+	for _, want := range []string{"*.nexo.local", "Rate limit requests", "hash-local"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("node page missing %q", want)
 		}

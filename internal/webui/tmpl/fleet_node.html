@@ -3,13 +3,15 @@
   {{template "nav" .}}
   <style>
     .fleet-node-page h1 { font-size: 18px; }
-    .fleet-node-page .sub { margin: 4px 0 18px; color: var(--ink-soft); font: 12px/1.6 var(--mono-font); }
+    .fleet-node-page .sub { margin: 4px 0 18px; color: var(--ink-soft); font: 13px/1.6 var(--mono-font); }
     .fleet-node-page section { margin-top: 24px; }
     .fleet-node-page section > h2 { margin-bottom: 8px; font-size: 14px; }
     .fleet-kv { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; padding: 12px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
     .fleet-kv div { min-width: 0; }
-    .fleet-kv dt { color: var(--ink-soft); font: 10px/1.6 var(--mono-font); text-transform: uppercase; }
-    .fleet-kv dd { margin: 2px 0 0; overflow: hidden; font: 12px/1.5 var(--mono-font); text-overflow: ellipsis; }
+    .fleet-kv dt { color: var(--ink-soft); font: 11px/1.6 var(--mono-font); text-transform: uppercase; }
+    .fleet-kv dd { margin: 3px 0 0; overflow: hidden; font: 13px/1.5 var(--mono-font); font-variant-numeric: tabular-nums; text-overflow: ellipsis; }
+    .fleet-kv dd.kv-num { font-size: 18px; line-height: 1.3; }
+    .fleet-kv .kv-suffix { margin-left: 8px; font-size: 12px; }
     .fleet-node-page table td, .fleet-node-page table th { white-space: nowrap; }
     .fleet-node-page .state-valid { color: var(--green); }
     .fleet-node-page .state-expiring, .fleet-node-page .state-expired, .fleet-node-page .state-missing { color: var(--coral); }
@@ -23,13 +25,13 @@
 
   <main class="container fleet-node-page">
     <h1>{{if .Node.Name}}{{.Node.Name}}{{else}}{{.Node.ID}}{{end}}</h1>
-    <p class="sub">{{.Node.ID}} · {{.Node.State}} · v{{.Node.Version}} · up {{.Node.Uptime}}{{if .Node.Error}} · <span style="color:var(--coral)">{{.Node.Error}}</span>{{end}}</p>
+    <p class="sub">{{.Node.ID}} · {{.Node.State}} · {{.Node.Version}} · up {{.Node.Uptime}}{{if .Node.Error}} · <span style="color:var(--coral)">{{.Node.Error}}</span>{{end}}</p>
 
     <dl class="fleet-kv">
-      <div><dt>Routes</dt><dd>{{len .Node.Routes}}</dd></div>
-      <div><dt>Requests</dt><dd>{{.Node.Requests}}</dd></div>
-      <div><dt>Unique IPs</dt><dd>{{.Node.UniqueIPs}}</dd></div>
-      <div><dt>Certificates</dt><dd>{{len .Node.Certificates}}{{if .Node.CertExpiring}} · <span class="state-expiring">{{.Node.CertExpiring}} expiring</span>{{end}}</dd></div>
+      <div><dt>Routes</dt><dd class="kv-num">{{len .Node.Routes}}</dd></div>
+      <div><dt>Requests</dt><dd class="kv-num">{{.Node.Requests}}</dd></div>
+      <div><dt>Unique IPs</dt><dd class="kv-num">{{.Node.UniqueIPs}}</dd></div>
+      <div><dt>Certificates</dt><dd class="kv-num">{{len .Node.Certificates}}{{if .Node.CertExpiring}}<span class="state-expiring kv-suffix">{{.Node.CertExpiring}} expiring</span>{{end}}</dd></div>
       <div><dt>Config hash</dt><dd title="{{.Node.ConfigHash}}">{{short .Node.ConfigHash}}</dd></div>
       <div><dt>Latency</dt><dd>{{.Node.Latency}}</dd></div>
       <div><dt>Last success</dt><dd>{{if .Node.LastSuccess}}{{.Node.LastSuccess}}{{else}}—{{end}}</dd></div>
@@ -63,14 +65,14 @@
       <h2>Certificates</h2>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Domain</th><th>State</th><th>Days left</th><th>Not after</th><th></th></tr></thead>
+          <thead><tr><th>Domain</th><th>State</th><th class="num">Days left</th><th class="num">Not after</th><th></th></tr></thead>
           <tbody>
             {{range .Node.Certificates}}
             <tr>
               <td>{{.Domain}}</td>
               <td class="state-{{.State}}">{{.State}}</td>
-              <td>{{.DaysLeft}}</td>
-              <td>{{if .NotAfter}}{{.NotAfter}}{{else}}—{{end}}</td>
+              <td class="num">{{.DaysLeft}}</td>
+              <td class="num">{{if .NotAfter}}{{.NotAfter}}{{else}}—{{end}}</td>
               <td>
                 <form method="POST" action="/fleet/cert/renew">
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">

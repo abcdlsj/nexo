@@ -51,6 +51,12 @@ var (
 
 	tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		"hasPrefix": strings.HasPrefix,
+		"plural": func(count int, one, many string) string {
+			if count == 1 {
+				return one
+			}
+			return many
+		},
 		"short": func(value string) string {
 			if len(value) <= 10 {
 				return value
