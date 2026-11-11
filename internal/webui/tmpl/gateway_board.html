@@ -6,7 +6,7 @@
   </header>
 
   <div class="topology-scroll" id="topology-scroll">
-    {{if .Routes}}
+    {{if or .Routes .FleetNodes}}
     <div class="topology-canvas" id="topology-canvas">
       <svg class="topology-wires" id="topology-wires" aria-hidden="true">
         <path class="topology-wire-base" id="ingress-wire-base"></path>
@@ -14,6 +14,9 @@
         <circle class="topology-packet" r="3">
           <animateMotion dur="1.6s" begin="-.4s" repeatCount="indefinite"><mpath href="#ingress-wire-live"></mpath></animateMotion>
         </circle>
+        {{range $index, $node := .FleetNodes}}
+        <path class="topology-wire-base remote-wire-{{$index}}"></path>
+        {{end}}
         {{range $index, $route := .Routes}}
         <path class="topology-wire-base route-wire-{{$index}}"></path>
         <path class="topology-wire-live route-wire-{{$index}}" id="route-wire-live-{{$index}}"></path>
@@ -28,9 +31,17 @@
         <span><span class="topology-name">Internet</span><span class="topology-meta">HTTPS :443</span></span>
       </div>
 
-      <div class="topology-node core-node" id="core-node" data-search="nexo gateway tls oauth routing">
-        <span class="topology-icon">{{template "mark" .}}</span>
-        <span class="topology-name nexo-node-wordmark">NEXO</span>
+      <div class="core-stack" id="core-stack">
+        <div class="topology-node core-node" id="core-node" data-search="nexo gateway tls oauth routing">
+          <span class="topology-icon">{{template "mark" .}}</span>
+          <span><span class="topology-name nexo-node-wordmark">NEXO</span><span class="topology-meta">{{len .Routes}} routes · local</span></span>
+        </div>
+        {{range $index, $node := .FleetNodes}}
+        <a class="topology-node remote-node state-{{$node.State}}" id="remote-node-{{$index}}" data-remote-index="{{$index}}" href="/fleet/node?id={{$node.ID}}" data-search="{{$node.Name}} {{$node.ID}} {{$node.State}}">
+          <span class="topology-icon">{{template "mark" .}}</span>
+          <span><span class="topology-name">{{$node.Name}}</span><span class="topology-meta">{{$node.Routes}} routes{{if $node.Requests}} · {{$node.Requests}} req{{end}} · {{$node.State}}</span></span>
+        </a>
+        {{end}}
       </div>
 
       <div class="topology-services" id="topology-services">

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abcdlsj/nexo/internal/control"
 	"github.com/abcdlsj/nexo/pkg/config"
 	"github.com/abcdlsj/nexo/pkg/proxy"
 	"github.com/charmbracelet/log"
@@ -17,6 +18,16 @@ type DashboardData struct {
 	PageData
 	Routes          []RouteView
 	ProtectedRoutes int
+	FleetNodes      []FleetNodeSummary
+}
+
+// FleetNodeSummary is the topology-only view of another Nexo instance.
+type FleetNodeSummary struct {
+	ID       string
+	Name     string
+	State    string
+	Routes   int
+	Requests int64
 }
 
 // RouteView is the stable, presentation-only form of a configured route.
@@ -205,6 +216,7 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PageData: h.newPageData(r, "dashboard"),
 		Routes:   buildRouteViewsWithDiscovery(h.allRoutes(), discoveries),
 	}
+	data.FleetNodes = h.fleetNodeSummaries()
 
 	for _, route := range data.Routes {
 		if route.Auth {
@@ -216,6 +228,39 @@ func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		log.Error("Failed to render dashboard", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+// fleetNodeSummaries lists the peers a coordinator observes, for the gateway
+// topology. The local node is the topology core and is not repeated here.
+func (h *Handler) fleetNodeSummaries() []FleetNodeSummary {
+	fleet := h.fleetSnapshot()
+	if fleet == nil {
+		return nil
+	}
+	nodes := make([]FleetNodeSummary, 0, len(fleet.Nodes))
+	for _, node := range fleet.Nodes {
+		if node.State == control.StateLocal {
+			continue
+		}
+		summary := FleetNodeSummary{ID: node.PeerID, Name: node.PeerID, State: node.State}
+		if node.Snapshot != nil && node.Snapshot.Node != nil {
+			if node.Snapshot.Node.Spec.ID != "" {
+				summary.ID = node.Snapshot.Node.Spec.ID
+			}
+			if node.Snapshot.Node.Spec.Name != "" {
+				summary.Name = node.Snapshot.Node.Spec.Name
+			}
+			summary.Routes = len(node.Snapshot.Routes)
+			if node.Snapshot.Traffic != nil {
+				summary.Requests = node.Snapshot.Traffic.Status.TotalRequests
+			}
+		}
+		nodes = append(nodes, summary)
+	}
+	slices.SortFunc(nodes, func(a, b FleetNodeSummary) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return nodes
 }
 
 type ProxiesData struct {

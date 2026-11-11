@@ -4,6 +4,7 @@
     var search = document.getElementById('route-search');
     var rows = Array.prototype.slice.call(document.querySelectorAll('.gateway-route-row'));
     var nodes = Array.prototype.slice.call(document.querySelectorAll('.topology-service'));
+    var remotes = Array.prototype.slice.call(document.querySelectorAll('.remote-node'));
     var filters = Array.prototype.slice.call(document.querySelectorAll('.directory-filter'));
     var empty = document.getElementById('route-filter-empty');
     var activeFilter = 'all';
@@ -14,12 +15,29 @@
 
     function relativePoint(element, side, canvasBox) {
       var box = element.getBoundingClientRect();
+      if (side === 'bottom') return { x: box.left + box.width / 2 - canvasBox.left, y: box.bottom - canvasBox.top };
+      if (side === 'top') return { x: box.left + box.width / 2 - canvasBox.left, y: box.top - canvasBox.top };
       return { x: (side === 'right' ? box.right : box.left) - canvasBox.left, y: box.top + box.height / 2 - canvasBox.top };
     }
 
     function connectorPath(from, to) {
       var middle = from.x + (to.x - from.x) * .52;
       return 'M ' + from.x + ' ' + from.y + ' H ' + middle + ' V ' + to.y + ' H ' + to.x;
+    }
+
+    function verticalPath(from, to) {
+      return 'M ' + from.x + ' ' + from.y + ' V ' + to.y;
+    }
+
+    function attach(selector) {
+      return Array.prototype.slice.call(document.querySelectorAll(selector));
+    }
+
+    function spinePath(from, to) {
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'topology-wire-control');
+      path.setAttribute('d', verticalPath(from, to));
+      return path;
     }
 
     function setPath(selector, path) {
@@ -35,6 +53,21 @@
       var svg = document.getElementById('topology-wires');
       svg.setAttribute('viewBox', '0 0 ' + Math.max(canvas.scrollWidth, canvas.clientWidth) + ' ' + Math.max(canvas.scrollHeight, canvas.clientHeight));
       setPath('#ingress-wire-base, #ingress-wire-live', connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(core, 'left', canvasBox)));
+
+      remotes.forEach(function (node, index) {
+        setPath('.remote-wire-' + index, connectorPath(relativePoint(edge, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));
+      });
+
+      Array.prototype.slice.call(document.querySelectorAll('.topology-wire-control')).forEach(function (wire) { wire.remove(); });
+      var previous = core;
+      remotes.forEach(function (node) {
+        var from = relativePoint(previous, 'bottom', canvasBox);
+        var to = relativePoint(node, 'top', canvasBox);
+        from.x = to.x = from.x + (to.x - from.x) / 2;
+        svg.insertBefore(spinePath(from, to), svg.firstChild);
+        previous = node;
+      });
+
       nodes.forEach(function (node) {
         var selector = '.route-wire-' + node.dataset.routeIndex;
         setPath(selector, connectorPath(relativePoint(core, 'right', canvasBox), relativePoint(node, 'left', canvasBox)));

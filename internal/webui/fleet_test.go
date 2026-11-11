@@ -133,6 +133,24 @@ func TestFleetPageRenders(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsFleetNodes(t *testing.T) {
+	handler := newFleetHandler(t, &fakeFleet{data: fleetFixture()})
+	rec := httptest.NewRecorder()
+	handler.handleDashboard(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"core-stack", "remote-node-0", "Gateway B", "state-fresh", "topology-wire-control"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard topology missing %q", want)
+		}
+	}
+	if strings.Contains(body, "remote-node-1") {
+		t.Fatal("local node must not be duplicated as a remote card")
+	}
+}
+
 func TestFleetPageWithoutControlPlane(t *testing.T) {
 	handler := newFleetHandler(t, nil)
 	rec := httptest.NewRecorder()

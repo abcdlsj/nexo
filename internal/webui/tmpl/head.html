@@ -552,6 +552,35 @@
     .topology-service[hidden] { display: none; }
     .node-dim { opacity: .16; }
 
+    .core-stack { position: relative; z-index: 2; display: grid; gap: 8px; align-content: center; }
+    .core-stack .core-node, .core-stack .remote-node { width: 100%; }
+    .core-node {
+      border: 1px solid var(--blue);
+      border-left-width: 3px;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    .core-node::before { border-color: var(--blue); background: var(--blue); }
+    .core-node::after { border-color: var(--blue); background: var(--blue); }
+    .core-node .topology-name { color: var(--ink); }
+    .core-node .topology-meta { color: var(--ink-soft); }
+    .core-node .topology-icon { color: var(--blue); }
+    .remote-node {
+      min-height: 44px;
+      grid-template-columns: 26px minmax(0, 1fr);
+      padding: 7px 9px;
+      border: 1px dashed var(--line-soft);
+      background: var(--paper);
+    }
+    .remote-node::before { display: none; }
+    .remote-node:hover { border-color: var(--blue); color: var(--blue); text-decoration: none; }
+    .remote-node .topology-icon { width: 22px; height: 22px; color: var(--blue); }
+    .remote-node .topology-name { font-size: 12px; }
+    .remote-node .topology-meta { font-size: 10px; }
+    .remote-node.state-stale { border-color: var(--yellow); }
+    .remote-node.state-offline, .remote-node.state-identity_mismatch, .remote-node.state-misconfigured { border-color: var(--coral); opacity: .8; }
+    .topology-wire-control { fill: none; stroke: var(--blue); stroke-width: 1; stroke-dasharray: 3 5; opacity: .5; vector-effect: non-scaling-stroke; }
+
     .directory-filters { align-self: stretch; display: flex; margin-left: auto; gap: 18px; }
     .directory-filter { position: relative; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--ink-soft); font-size: 12px; }
     .directory-filter::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: transparent; }

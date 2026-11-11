@@ -20,6 +20,7 @@
     .fleet-node.state-stale { border-left-color: var(--yellow); }
     .fleet-node.state-offline, .fleet-node.state-identity_mismatch, .fleet-node.state-misconfigured { border-left-color: var(--coral); }
     .fleet-node-head { display: flex; align-items: center; gap: 8px; }
+    .fleet-node-head .nexo-mark { width: 14px; height: 14px; flex: none; color: var(--blue); }
     .fleet-node-name { color: var(--ink); font-size: 13px; font-weight: 700; text-decoration: none; }
     .fleet-node-name:hover { color: var(--blue); }
     .fleet-state { margin-left: auto; padding: 0 5px; border: 1px solid var(--line-soft); color: var(--ink-soft); font: 10px/1.6 var(--mono-font); text-transform: uppercase; }
@@ -95,6 +96,7 @@
         </div>
         <div class="fleet-node state-{{$n.State}}" id="fleet-node-{{$i}}">
           <div class="fleet-node-head">
+            <span class="fleet-mark">{{template "mark" .}}</span>
             <a class="fleet-node-name" href="/fleet/node?id={{$n.ID}}">{{if $n.Name}}{{$n.Name}}{{else}}{{$n.ID}}{{end}}</a>
             <span class="fleet-state {{$n.State}}">{{$n.State}}</span>
           </div>
