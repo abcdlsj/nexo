@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,5 +108,26 @@ func TestDockerConfigYAML(t *testing.T) {
 	}
 	if roundTrip.Docker != cfg.Docker {
 		t.Fatalf("docker config changed after round trip: %+v", roundTrip.Docker)
+	}
+}
+
+func TestWebUIDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("email: ops@example.com\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.WebUI.Enabled {
+		t.Fatal("web UI should default to enabled")
+	}
+	if cfg.ControlPlane.Enabled {
+		t.Fatal("control plane should default to disabled")
+	}
+	if cfg.ControlPlane.Listen != "127.0.0.1:9090" {
+		t.Fatalf("unexpected control listen default %q", cfg.ControlPlane.Listen)
 	}
 }
