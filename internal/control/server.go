@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,10 @@ type Server struct {
 	idem    *idempotencyCache
 	httpSrv *http.Server
 	handler http.Handler
+
+	tlsConfig *tls.Config
+	lnMu      sync.Mutex
+	listener  net.Listener
 }
 
 // New validates the security posture and prepares the node identity. It does
@@ -93,9 +98,22 @@ func New(opts Options) (*Server, error) {
 		log.Warn("Coordinator is enabled but the control plane is disabled; coordinator is idle")
 	}
 
-	tokenFile := strings.TrimSpace(cfg.ControlPlane.Auth.TokenFile)
-	if !isLoopbackListen(listen) && tokenFile == "" {
-		return nil, fmt.Errorf("control_plane.listen %q is not loopback; set control_plane.auth.token_file to require a token", listen)
+	tlsConfig, err := listenerTLS(cfg.ControlPlane.TLS)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateListen(listen, tlsConfig, cfg.ControlPlane.Auth); err != nil {
+		return nil, err
+	}
+	// A token file that is readable by others is a credential leak regardless of
+	// where the listener binds, so reject it at startup instead of returning 401
+	// on every request.
+	for _, tokenFile := range []string{cfg.ControlPlane.Auth.TokenFile, cfg.ControlPlane.Auth.WriteTokenFile} {
+		if strings.TrimSpace(tokenFile) != "" {
+			if err := requirePrivateFile(tokenFile); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	s := &Server{
@@ -107,8 +125,9 @@ func New(opts Options) (*Server, error) {
 			Started: opts.StartedAt,
 			Listen:  listen,
 		},
-		audit: NewAuditLog(opts.BaseDir),
-		idem:  newIdempotencyCache(15 * time.Minute),
+		audit:     NewAuditLog(opts.BaseDir),
+		idem:      newIdempotencyCache(15 * time.Minute),
+		tlsConfig: tlsConfig,
 	}
 	s.handler = s.routes()
 	s.fed = NewFederation(func() *Snapshot { return s.Snapshot(0) }, func() config.CoordinatorConfig {
@@ -167,6 +186,13 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("control plane listen: %w", err)
 	}
+	if s.tlsConfig != nil {
+		ln = tls.NewListener(ln, s.tlsConfig)
+	}
+
+	s.lnMu.Lock()
+	s.listener = ln
+	s.lnMu.Unlock()
 
 	s.httpSrv = &http.Server{
 		Handler:           s.handler,
@@ -179,7 +205,11 @@ func (s *Server) Start(ctx context.Context) error {
 		MaxHeaderBytes: 32 << 10,
 	}
 
-	log.Info("Control API listening", "addr", s.node.Listen, "node", s.node.ID)
+	scheme := "http"
+	if s.tlsConfig != nil {
+		scheme = "https"
+	}
+	log.Info("Control API listening", "addr", s.node.Listen, "scheme", scheme, "node", s.node.ID)
 
 	go s.fed.Run(ctx)
 	go func() {
@@ -199,6 +229,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Handler exposes the HTTP handler for tests.
 func (s *Server) Handler() http.Handler { return s.handler }
+
+// Addr returns the bound control address, ready for tests that need port 0.
+func (s *Server) Addr() string {
+	s.lnMu.Lock()
+	defer s.lnMu.Unlock()
+	if s.listener == nil {
+		return ""
+	}
+	return s.listener.Addr().String()
+}
 
 // NodeID is the stable identity reported to coordinators.
 func (s *Server) NodeID() string { return s.node.ID }
@@ -491,7 +531,7 @@ func readToken(path string) (string, error) {
 		return "", err
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		log.Debug("Control token file is readable by group or others", "file", path, "perm", info.Mode().Perm())
+		return "", fmt.Errorf("token file %s must be mode 0600", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

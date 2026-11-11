@@ -48,8 +48,12 @@ auth:
 #     name: nexo-main-01
 #     labels:
 #       region: eu
+#   tls:                                        # required when listen is public
+#     cert_file: /etc/nexo/control.crt
+#     key_file: /etc/nexo/control.key
+#     client_ca_file: /etc/nexo/control-ca.crt  # optional mutual TLS
 #   auth:
-#     token_file: /etc/nexo/control-token        # read:control
+#     token_file: /etc/nexo/control-token        # read:control, mode 0600
 #     write_token_file: /etc/nexo/control-write  # write:routes/certs/security
 #   coordinator:
 #     enabled: true
@@ -58,9 +62,12 @@ auth:
 #     stale_after: 30s
 #     peers:
 #       - id: nexo-hk-01
-#         url: http://10.0.0.12:9090
+#         url: http://10.0.0.12:9090              # prefer the tailnet address
 #         token_file: /etc/nexo/peers/nexo-hk-01.read
 #         write_token_file: /etc/nexo/peers/nexo-hk-01.write
+#         # public peer: https + ca_file, optional client_cert_file/client_key_file
+#         # ca_file: /etc/nexo/peers/control-ca.crt
+#         # server_name: nexo-hk-01.example.com
 #   topology:
 #     links:                          # explicit cross-node links for the fleet graph
 #       - id: api-to-internal

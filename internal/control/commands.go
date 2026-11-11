@@ -155,9 +155,13 @@ func (s *Server) Execute(nodeID string, req CommandRequest) (*CommandResult, err
 }
 
 func (s *Server) forwardCommand(peer config.ControlPeerConfig, req CommandRequest) (*CommandResult, error) {
-	base, err := url.Parse(strings.TrimSpace(peer.URL))
-	if err != nil || base.Host == "" {
-		return nil, &APIError{Code: "invalid_peer_url", Message: "peer url is invalid"}
+	base, err := parsePeerURL(peer)
+	if err != nil {
+		return nil, err
+	}
+	client, err := peerHTTPClient(peer, 110*time.Second)
+	if err != nil {
+		return nil, err
 	}
 	token, err := readToken(peer.WriteTokenFile)
 	if err != nil {
@@ -180,7 +184,7 @@ func (s *Server) forwardCommand(peer config.ControlPeerConfig, req CommandReques
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Nexo-Node-Id", s.node.ID)
 
-	resp, err := (&http.Client{Timeout: 110 * time.Second}).Do(httpReq)
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, &APIError{Code: "peer_unreachable", Message: err.Error(), Retryable: true}
 	}

@@ -175,7 +175,6 @@ func (f *Federation) poll(ctx context.Context, cfg config.CoordinatorConfig) {
 	f.syncPeers(cfg.Peers)
 
 	timeout := parseDuration(cfg.RequestTimeout, defaultTimeout)
-	client := &http.Client{Timeout: timeout}
 
 	var wg sync.WaitGroup
 	for _, peer := range cfg.Peers {
@@ -186,13 +185,13 @@ func (f *Federation) poll(ctx context.Context, cfg config.CoordinatorConfig) {
 		wg.Add(1)
 		go func(peer config.ControlPeerConfig) {
 			defer wg.Done()
-			f.fetch(ctx, client, peer)
+			f.fetch(ctx, peer, timeout)
 		}(peer)
 	}
 	wg.Wait()
 }
 
-func (f *Federation) fetch(ctx context.Context, client *http.Client, peer config.ControlPeerConfig) {
+func (f *Federation) fetch(ctx context.Context, peer config.ControlPeerConfig, timeout time.Duration) {
 	start := time.Now()
 
 	f.mu.Lock()
@@ -203,7 +202,18 @@ func (f *Federation) fetch(ctx context.Context, client *http.Client, peer config
 	}
 	f.mu.Unlock()
 
-	snapshot, err := fetchPeerSnapshot(ctx, client, peer)
+	peerURL, err := parsePeerURL(peer)
+	if err != nil {
+		f.markMisconfigured(peer.ID, toAPIError(err))
+		return
+	}
+	client, err := peerHTTPClient(peer, timeout)
+	if err != nil {
+		f.markMisconfigured(peer.ID, toAPIError(err))
+		return
+	}
+
+	snapshot, err := fetchPeerSnapshot(ctx, client, peerURL, peer)
 	latency := time.Since(start)
 
 	f.mu.Lock()
@@ -213,11 +223,17 @@ func (f *Federation) fetch(ctx context.Context, client *http.Client, peer config
 	state.latency = latency
 
 	if err != nil {
+		apiErr := toAPIError(err)
+		if isConfigurationError(apiErr) {
+			state.state = StateMisconfigured
+			state.err = apiErr
+			return
+		}
 		state.failures++
 		if state.failures >= 3 {
 			state.state = StateOffline
 		}
-		state.err = toAPIError(err)
+		state.err = apiErr
 		return
 	}
 
@@ -237,11 +253,7 @@ func (f *Federation) fetch(ctx context.Context, client *http.Client, peer config
 	state.err = nil
 }
 
-func fetchPeerSnapshot(ctx context.Context, client *http.Client, peer config.ControlPeerConfig) (*Snapshot, error) {
-	base, err := url.Parse(strings.TrimSpace(peer.URL))
-	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil {
-		return nil, &APIError{Code: "invalid_peer_url", Message: "peer url must be http(s) without credentials"}
-	}
+func fetchPeerSnapshot(ctx context.Context, client *http.Client, base *url.URL, peer config.ControlPeerConfig) (*Snapshot, error) {
 	endpoint := strings.TrimRight(base.String(), "/") + "/control/v1/snapshot?recent_limit=0"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -291,6 +303,30 @@ func fetchPeerSnapshot(ctx context.Context, client *http.Client, peer config.Con
 		return nil, fmt.Errorf("decode peer snapshot: %w", err)
 	}
 	return &snapshot, nil
+}
+
+// isConfigurationError marks peer problems that polling cannot fix.
+func isConfigurationError(err *APIError) bool {
+	if err == nil {
+		return false
+	}
+	switch err.Code {
+	case "invalid_peer_url", "insecure_peer_url", "missing_token", "invalid_peer_tls":
+		return true
+	}
+	return false
+}
+
+func (f *Federation) markMisconfigured(peerID string, err *APIError) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	state, ok := f.peers[peerID]
+	if !ok {
+		return
+	}
+	state.state = StateMisconfigured
+	state.err = err
+	state.lastAttempt = time.Now()
 }
 
 func toAPIError(err error) *APIError {

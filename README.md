@@ -203,14 +203,20 @@ control_plane:
 - The coordinator pulls each peer on `poll_interval` (default 10s). Peers never
   need an inbound rule beyond the control listener, and no peer stores the
   coordinates of another.
+- Use the tailnet/VPN address for every peer (`100.64.0.0/10`, RFC 1918, ULA).
+  Plaintext HTTP is accepted only for those addresses. A public address needs
+  HTTPS; a plaintext URL to a public host is refused unless
+  `allow_insecure_http` is set explicitly.
 - A peer that stops answering is shown `stale` after `stale_after`, then
   `offline` after three failed polls. A peer id mismatch is reported separately
   instead of being counted as healthy.
-- `control_plane.listen` must be loopback unless `auth.token_file` is set; the
-  process refuses to start otherwise. Keep the listener on a private network
-  (tailnet/VPN) and never reuse the data-plane `:443` listener.
+- The process refuses to start when a listener is public without TLS, or when a
+  public listener has no token, or when a token file is not `0600`. Never reuse
+  the data-plane `:443` listener.
 - Tokens are re-read per request, so rotation needs no restart. Keep read and
   write tokens separate: a monitoring credential cannot mutate configuration.
+- Commands require `Content-Type: application/json`, which forces a CORS
+  preflight and blocks cross-site form posts against a loopback listener.
 - The node id is generated once and persisted to `<base_dir>/node-id`.
 
 Machine API (`/control/v1`, bearer token, JSON):
@@ -229,6 +235,40 @@ The snapshot never carries API tokens, passwords, key material or upstream
 paths. Traffic aggregates are per node; unique IP counts are explicitly not
 summed across the fleet, and recent records ship a hashed IP without path or
 user agent.
+
+### Reaching a node beyond the tailnet
+
+If a node is only reachable over the public internet, terminate TLS on the
+control listener and trust a private CA rather than the public one:
+
+```yaml
+control_plane:
+  enabled: true
+  listen: 0.0.0.0:9090
+  tls:
+    cert_file: /etc/nexo/control.crt
+    key_file: /etc/nexo/control.key
+    client_ca_file: /etc/nexo/control-ca.crt   # optional mutual TLS
+  auth:
+    token_file: /etc/nexo/control-token
+    write_token_file: /etc/nexo/control-write
+
+  coordinator:
+    peers:
+      - id: nexo-hk-01
+        url: https://nexo-hk-01.example.com:9090
+        ca_file: /etc/nexo/peers/control-ca.crt
+        client_cert_file: /etc/nexo/peers/nexo-main-01.crt
+        client_key_file: /etc/nexo/peers/nexo-main-01.key
+        server_name: nexo-hk-01.example.com
+        token_file: /etc/nexo/peers/nexo-hk-01.read
+        write_token_file: /etc/nexo/peers/nexo-hk-01.write
+```
+
+`client_ca_file` on the listener turns on mutual TLS: a peer must present a
+client certificate signed by that CA *and* a valid bearer token. Peer
+certificates are optional on the tailnet, where WireGuard already authenticates
+both ends.
 
 ### Making changes from the fleet panel
 

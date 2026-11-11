@@ -123,6 +123,18 @@ type ControlPlaneConfig struct {
 	Auth        ControlAuthConfig     `mapstructure:"auth" yaml:"auth,omitempty"`
 	Coordinator CoordinatorConfig     `mapstructure:"coordinator" yaml:"coordinator,omitempty"`
 	Topology    ControlTopologyConfig `mapstructure:"topology" yaml:"topology,omitempty"`
+	TLS         ControlTLSConfig      `mapstructure:"tls" yaml:"tls,omitempty"`
+}
+
+// ControlTLSConfig secures the control listener. It is required when Listen is
+// not a private or loopback address: plaintext management traffic is only
+// acceptable inside a VPN/tailnet.
+type ControlTLSConfig struct {
+	CertFile string `mapstructure:"cert_file" yaml:"cert_file,omitempty"`
+	KeyFile  string `mapstructure:"key_file" yaml:"key_file,omitempty"`
+	// ClientCAFile enables mutual TLS: peers must present a certificate signed
+	// by this CA in addition to their bearer token.
+	ClientCAFile string `mapstructure:"client_ca_file" yaml:"client_ca_file,omitempty"`
 }
 
 // ControlNodeConfig carries the stable logical identity of this node. ID is
@@ -163,6 +175,20 @@ type ControlPeerConfig struct {
 	URL            string `mapstructure:"url" yaml:"url"`
 	TokenFile      string `mapstructure:"token_file" yaml:"token_file,omitempty"`
 	WriteTokenFile string `mapstructure:"write_token_file" yaml:"write_token_file,omitempty"`
+
+	// CAFile replaces the system trust store for this peer.
+	CAFile string `mapstructure:"ca_file" yaml:"ca_file,omitempty"`
+	// ClientCertFile and ClientKeyFile enable mutual TLS towards the peer.
+	ClientCertFile string `mapstructure:"client_cert_file" yaml:"client_cert_file,omitempty"`
+	ClientKeyFile  string `mapstructure:"client_key_file" yaml:"client_key_file,omitempty"`
+	// ServerName overrides the TLS name when the URL host is an address.
+	ServerName string `mapstructure:"server_name" yaml:"server_name,omitempty"`
+	// InsecureSkipVerify disables certificate verification. Development only.
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify" yaml:"insecure_skip_verify,omitempty"`
+	// AllowInsecureHTTP permits plaintext HTTP to a non-private address. It
+	// exists for tunnels that already provide encryption and is refused
+	// otherwise.
+	AllowInsecureHTTP bool `mapstructure:"allow_insecure_http" yaml:"allow_insecure_http,omitempty"`
 }
 
 // ControlTopologyConfig holds explicit cross-node links. Links are display and
